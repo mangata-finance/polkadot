@@ -125,7 +125,7 @@ impl<T: paras_inherent::Config> BenchBuilder<T> {
 
         /// Specify a mapping of core_idx/para_id/group_idx seed to the number of dispute statements for the
         /// corresponding dispute statement set. Note that if the number of disputes is not specified it fallbacks
-        /// to having a dispute per every validator. Additionally, an entry is not guaranteed to have a dispute - it 
+        /// to having a dispute per every validator. Additionally, an entry is not guaranteed to have a dispute - it
         /// must line up with the cores marked as disputed as defined in `Self::Build`.
 	#[cfg(not(feature = "runtime-benchmarks"))]
 	pub(crate) fn set_dispute_statements(mut self, m: BTreeMap<u32, u32>) -> Self {
@@ -302,7 +302,7 @@ impl<T: paras_inherent::Config> BenchBuilder<T> {
 		frame_system::Pallet::<T>::initialize(
 			&header.number(),
 			&header.hash(),
-			&Digest::<T::Hash> { logs: Vec::new() },
+			&Digest { logs: Vec::new() },
 			Default::default(),
 		);
 
