@@ -12,7 +12,8 @@ function clean_up {
 trap clean_up SIGHUP SIGINT SIGTERM
 
 
-export RUST_LOG=debug,sync=info,afg=info,libp2p_swarm=info,multistream_select=info,libp2p_core=info,sub-libp2p=info,libp2p_tcp=info,wasm_overrides=info,wasm-heap=info,libp2p_ping=info,state=trace,runtime=debug
+# export RUST_LOG=debug,sync=info,afg=info,libp2p_swarm=info,multistream_select=info,libp2p_core=info,sub-libp2p=info,libp2p_tcp=info,wasm_overrides=info,wasm-heap=info,libp2p_ping=info,state=trace,runtime=debug
+export RUST_LOG=debug,sync=info,afg=info,libp2p_swarm=info,multistream_select=info,libp2p_core=info,sub-libp2p=info,libp2p_tcp=info,wasm_overrides=info,wasm-heap=info,libp2p_ping=info,runtime=debug
 
 termite -e "/bin/bash -c \"./target/release/polkadot --alice --validator --tmp --chain ./local.json --port 30333  --ws-port 9944 2>/tmp/relay \"" &
 RELAY_PID=$!
