@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 homepage = "https://substrate.dev"
-repository = "https://github.com/paritytech/parity-bridges-common/"
+repository = "https://github.com/mangata-finance/parity-bridges-common/"
 license = "GPL-3.0-or-later WITH Classpath-exception-2.0"
 
 [dependencies]
@@ -24,13 +24,13 @@ pallet-bridge-messages = { path = "../../modules/messages", default-features = f
 
 # Substrate dependencies
 
-frame-support = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.12" }
-pallet-transaction-payment = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.12" }
-sp-core = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.12" }
-sp-runtime = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.12" }
-sp-state-machine = { git = "https://github.com/paritytech/substrate", default-features = false, optional = true , branch = "polkadot-v0.9.12" }
-sp-std = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.12" }
-sp-trie = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.12" }
+frame-support = { git = "https://github.com/mangata-finance/substrate", default-features = false , branch = "mangata-dev-v4" }
+pallet-transaction-payment = { git = "https://github.com/mangata-finance/substrate", default-features = false , branch = "mangata-dev-v4" }
+sp-core = { git = "https://github.com/mangata-finance/substrate", default-features = false , branch = "mangata-dev-v4" }
+sp-runtime = { git = "https://github.com/mangata-finance/substrate", default-features = false , branch = "mangata-dev-v4" }
+sp-state-machine = { git = "https://github.com/mangata-finance/substrate", default-features = false, optional = true , branch = "mangata-dev-v4" }
+sp-std = { git = "https://github.com/mangata-finance/substrate", default-features = false , branch = "mangata-dev-v4" }
+sp-trie = { git = "https://github.com/mangata-finance/substrate", default-features = false , branch = "mangata-dev-v4" }
 
 [features]
 default = ["std"]
