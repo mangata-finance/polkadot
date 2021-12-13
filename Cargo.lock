@@ -4551,7 +4551,7 @@ dependencies = [
 [[package]]
 name = "orml-tokens"
 version = "0.4.1-dev"
-source = "git+https://github.com/mangata-finance/open-runtime-module-library?branch=mangata-dev-v4#de9e3c4b7aaf25688bf2d4b212dd5d0fa27e1642"
+source = "git+https://github.com/mangata-finance/open-runtime-module-library?branch=mangata-dev-v4#747ad046926041c5abe58f2da2c0bdf704c76faa"
 dependencies = [
  "frame-support",
  "frame-system",
@@ -4567,7 +4567,7 @@ dependencies = [
 [[package]]
 name = "orml-traits"
 version = "0.4.1-dev"
-source = "git+https://github.com/mangata-finance/open-runtime-module-library?branch=mangata-dev-v4#de9e3c4b7aaf25688bf2d4b212dd5d0fa27e1642"
+source = "git+https://github.com/mangata-finance/open-runtime-module-library?branch=mangata-dev-v4#747ad046926041c5abe58f2da2c0bdf704c76faa"
 dependencies = [
  "frame-support",
  "impl-trait-for-tuples",
@@ -4579,13 +4579,13 @@ dependencies = [
  "sp-io",
  "sp-runtime",
  "sp-std",
- "xcm 0.9.12 (git+https://github.com/mangata-finance/polkadot?branch=release-v0.9.12)",
+ "xcm 0.9.12 (git+https://github.com/mangata-finance/polkadot?branch=mangata-dev-v4)",
 ]
 
 [[package]]
 name = "orml-utilities"
 version = "0.4.1-dev"
-source = "git+https://github.com/mangata-finance/open-runtime-module-library?branch=mangata-dev-v4#de9e3c4b7aaf25688bf2d4b212dd5d0fa27e1642"
+source = "git+https://github.com/mangata-finance/open-runtime-module-library?branch=mangata-dev-v4#747ad046926041c5abe58f2da2c0bdf704c76faa"
 dependencies = [
  "frame-support",
  "parity-scale-codec",
@@ -11718,14 +11718,14 @@ dependencies = [
 [[package]]
 name = "xcm"
 version = "0.9.12"
-source = "git+https://github.com/mangata-finance/polkadot?branch=release-v0.9.12#5feed981cf0fe671447eabaa9c0d235a8dd0003e"
+source = "git+https://github.com/mangata-finance/polkadot?branch=mangata-dev-v4#5feed981cf0fe671447eabaa9c0d235a8dd0003e"
 dependencies = [
  "derivative",
  "impl-trait-for-tuples",
  "log",
  "parity-scale-codec",
  "scale-info",
- "xcm-procedural 0.1.0 (git+https://github.com/mangata-finance/polkadot?branch=release-v0.9.12)",
+ "xcm-procedural 0.1.0 (git+https://github.com/mangata-finance/polkadot?branch=mangata-dev-v4)",
 ]
 
 [[package]]
@@ -11800,7 +11800,7 @@ dependencies = [
 [[package]]
 name = "xcm-procedural"
 version = "0.1.0"
-source = "git+https://github.com/mangata-finance/polkadot?branch=release-v0.9.12#5feed981cf0fe671447eabaa9c0d235a8dd0003e"
+source = "git+https://github.com/mangata-finance/polkadot?branch=mangata-dev-v4#5feed981cf0fe671447eabaa9c0d235a8dd0003e"
 dependencies = [
  "proc-macro2",
  "quote",
