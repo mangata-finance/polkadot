@@ -18,7 +18,7 @@
 
 use super::Junction;
 use core::{convert::TryFrom, mem, result};
-use parity_scale_codec::{Decode, Encode};
+use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
 /// A relative path between state-bearing consensus systems.
@@ -58,6 +58,12 @@ pub struct MultiLocation {
 impl Default for MultiLocation {
 	fn default() -> Self {
 		Self { parents: 0, interior: Junctions::Here }
+	}
+}
+
+impl MaxEncodedLen for MultiLocation{
+	fn max_encoded_len() -> usize {
+		usize::MAX
 	}
 }
 
