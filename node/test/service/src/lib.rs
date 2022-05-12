@@ -41,7 +41,7 @@ use sc_network::{
 	config::{NetworkConfiguration, TransportConfig},
 	multiaddr,
 };
-use service::{
+use sc_service::{
 	config::{DatabaseSource, KeystoreConfig, MultiaddrWithPeerId, WasmExecutionMethod},
 	BasePath, Configuration, KeepBlocks, Role, RpcHandlers, TaskManager, TransactionStorageMode,
 };
@@ -95,6 +95,7 @@ pub fn new_full(
 		None,
 		None,
 		worker_program_path,
+		false,
 		polkadot_service::RealOverseerGen,
 	)
 }
