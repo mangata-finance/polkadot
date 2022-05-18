@@ -61,7 +61,7 @@ impl Default for MultiLocation {
 	}
 }
 
-impl MaxEncodedLen for MultiLocation{
+impl MaxEncodedLen for MultiLocation {
 	fn max_encoded_len() -> usize {
 		usize::MAX
 	}
