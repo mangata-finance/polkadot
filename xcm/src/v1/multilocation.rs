@@ -17,8 +17,8 @@
 //! Cross-Consensus Message format data structures.
 
 use super::Junction;
-use core::{convert::TryFrom, mem, result};
-use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+use core::{mem, result};
+use parity_scale_codec::{Decode, Encode};
 use scale_info::TypeInfo;
 
 /// A relative path between state-bearing consensus systems.
@@ -58,12 +58,6 @@ pub struct MultiLocation {
 impl Default for MultiLocation {
 	fn default() -> Self {
 		Self { parents: 0, interior: Junctions::Here }
-	}
-}
-
-impl MaxEncodedLen for MultiLocation {
-	fn max_encoded_len() -> usize {
-		usize::MAX
 	}
 }
 
@@ -1017,7 +1011,6 @@ mod tests {
 	#[test]
 	fn conversion_from_other_types_works() {
 		use crate::v0;
-		use core::convert::TryInto;
 
 		fn takes_multilocation<Arg: Into<MultiLocation>>(_arg: Arg) {}
 

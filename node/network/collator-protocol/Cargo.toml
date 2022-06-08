@@ -1,6 +1,6 @@
 [package]
 name = "polkadot-collator-protocol"
-version = "0.9.18"
+version = "0.9.19"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2021"
 
@@ -8,11 +8,11 @@ edition = "2021"
 always-assert = "0.1.2"
 futures = "0.3.21"
 futures-timer = "3"
-tracing = "0.1.31"
+gum = { package = "tracing-gum", path = "../../gum" }
 
-sp-core = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.18" }
-sp-runtime = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.18" }
-sp-keystore = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.18" }
+sp-core = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.19" }
+sp-runtime = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.19" }
+sp-keystore = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.19" }
 
 polkadot-primitives = { path = "../../../primitives" }
 polkadot-node-network-protocol = { path = "../../network/protocol" }
@@ -23,14 +23,14 @@ fatality = "0.0.6"
 thiserror = "1.0.30"
 
 [dev-dependencies]
-log = "0.4.13"
+log = "0.4.16"
 env_logger = "0.9.0"
 assert_matches = "1.4.0"
 
-sp-core = { git = "https://github.com/paritytech/substrate", features = ["std"] , branch = "polkadot-v0.9.18" }
-sp-keyring = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.18" }
-sc-network = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.18" }
-parity-scale-codec = { version = "3.0.0", features = ["std"] }
+sp-core = { git = "https://github.com/paritytech/substrate", features = ["std"] , branch = "polkadot-v0.9.19" }
+sp-keyring = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.19" }
+sc-network = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.19" }
+parity-scale-codec = { version = "3.1.2", features = ["std"] }
 
 polkadot-subsystem-testhelpers = { package = "polkadot-node-subsystem-test-helpers", path = "../../subsystem-test-helpers" }
 polkadot-primitives-test-helpers = { path = "../../../primitives/test-helpers" }
