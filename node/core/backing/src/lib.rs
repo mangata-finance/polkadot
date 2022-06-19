@@ -31,8 +31,8 @@ use futures::{
 };
 
 use polkadot_node_primitives::{
-	AvailableData, PoV, SignedDisputeStatement, SignedFullStatement, Statement, ValidationResult,
-	BACKING_EXECUTION_TIMEOUT,
+	AvailableData, InvalidCandidate, PoV, SignedDisputeStatement, SignedFullStatement, Statement,
+	ValidationResult, BACKING_EXECUTION_TIMEOUT,
 };
 use polkadot_node_subsystem_util::{
 	self as util,
@@ -41,8 +41,8 @@ use polkadot_node_subsystem_util::{
 	request_validators, FromJobCommand, JobSender, Validator,
 };
 use polkadot_primitives::v2::{
-	BackedCandidate, CandidateCommitments, CandidateDescriptor, CandidateHash, CandidateReceipt,
-	CollatorId, CommittedCandidateReceipt, CoreIndex, CoreState, Hash, Id as ParaId, SessionIndex,
+	BackedCandidate, CandidateCommitments, CandidateHash, CandidateReceipt, CollatorId,
+	CommittedCandidateReceipt, CoreIndex, CoreState, Hash, Id as ParaId, SessionIndex,
 	SigningContext, ValidatorId, ValidatorIndex, ValidatorSignature, ValidityAttestation,
 };
 use polkadot_subsystem::{
@@ -378,14 +378,14 @@ async fn request_pov(
 
 async fn request_candidate_validation(
 	sender: &mut JobSender<impl SubsystemSender>,
-	candidate: CandidateDescriptor,
+	candidate_receipt: CandidateReceipt,
 	pov: Arc<PoV>,
 ) -> Result<ValidationResult, Error> {
 	let (tx, rx) = oneshot::channel();
 
 	sender
 		.send_message(CandidateValidationMessage::ValidateFromChainState(
-			candidate,
+			candidate_receipt,
 			pov,
 			BACKING_EXECUTION_TIMEOUT,
 			tx,
@@ -456,10 +456,8 @@ async fn validate_and_make_available(
 				.with_pov(&pov)
 				.with_para_id(candidate.descriptor().para_id)
 		});
-		request_candidate_validation(&mut sender, candidate.descriptor.clone(), pov.clone()).await?
+		request_candidate_validation(&mut sender, candidate.clone(), pov.clone()).await?
 	};
-
-	let expected_commitments_hash = candidate.commitments_hash;
 
 	let res = match v {
 		ValidationResult::Valid(commitments, validation_data) => {
@@ -469,40 +467,38 @@ async fn validate_and_make_available(
 				"Validation successful",
 			);
 
-			// If validation produces a new set of commitments, we vote the candidate as invalid.
-			if commitments.hash() != expected_commitments_hash {
-				gum::debug!(
-					target: LOG_TARGET,
-					candidate_hash = ?candidate.hash(),
-					actual_commitments = ?commitments,
-					"Commitments obtained with validation don't match the announced by the candidate receipt",
-				);
-				Err(candidate)
-			} else {
-				let erasure_valid = make_pov_available(
-					&mut sender,
-					n_validators,
-					pov.clone(),
-					candidate.hash(),
-					validation_data,
-					candidate.descriptor.erasure_root,
-					span.as_ref(),
-				)
-				.await?;
+			let erasure_valid = make_pov_available(
+				&mut sender,
+				n_validators,
+				pov.clone(),
+				candidate.hash(),
+				validation_data,
+				candidate.descriptor.erasure_root,
+				span.as_ref(),
+			)
+			.await?;
 
-				match erasure_valid {
-					Ok(()) => Ok((candidate, commitments, pov.clone())),
-					Err(InvalidErasureRoot) => {
-						gum::debug!(
-							target: LOG_TARGET,
-							candidate_hash = ?candidate.hash(),
-							actual_commitments = ?commitments,
-							"Erasure root doesn't match the announced by the candidate receipt",
-						);
-						Err(candidate)
-					},
-				}
+			match erasure_valid {
+				Ok(()) => Ok((candidate, commitments, pov.clone())),
+				Err(InvalidErasureRoot) => {
+					gum::debug!(
+						target: LOG_TARGET,
+						candidate_hash = ?candidate.hash(),
+						actual_commitments = ?commitments,
+						"Erasure root doesn't match the announced by the candidate receipt",
+					);
+					Err(candidate)
+				},
 			}
+		},
+		ValidationResult::Invalid(InvalidCandidate::CommitmentsHashMismatch) => {
+			// If validation produces a new set of commitments, we vote the candidate as invalid.
+			gum::warn!(
+				target: LOG_TARGET,
+				candidate_hash = ?candidate.hash(),
+				"Validation yielded different commitments",
+			);
+			Err(candidate)
 		},
 		ValidationResult::Invalid(reason) => {
 			gum::debug!(
@@ -743,16 +739,19 @@ impl CandidateBackingJob {
 	}
 
 	/// Check if there have happened any new misbehaviors and issue necessary messages.
-	async fn issue_new_misbehaviors(&mut self, sender: &mut JobSender<impl SubsystemSender>) {
+	fn issue_new_misbehaviors(&mut self, sender: &mut JobSender<impl SubsystemSender>) {
 		// collect the misbehaviors to avoid double mutable self borrow issues
 		let misbehaviors: Vec<_> = self.table.drain_misbehaviors().collect();
 		for (validator_id, report) in misbehaviors {
-			sender
-				.send_message(ProvisionerMessage::ProvisionableData(
-					self.parent,
-					ProvisionableData::MisbehaviorReport(self.parent, validator_id, report),
-				))
-				.await;
+			// The provisioner waits on candidate-backing, which means
+			// that we need to send unbounded messages to avoid cycles.
+			//
+			// Misbehaviors are bounded by the number of validators and
+			// the block production protocol.
+			sender.send_unbounded_message(ProvisionerMessage::ProvisionableData(
+				self.parent,
+				ProvisionableData::MisbehaviorReport(self.parent, validator_id, report),
+			));
 		}
 	}
 
@@ -817,11 +816,16 @@ impl CandidateBackingJob {
 						"Candidate backed",
 					);
 
+					// The provisioner waits on candidate-backing, which means
+					// that we need to send unbounded messages to avoid cycles.
+					//
+					// Backed candidates are bounded by the number of validators,
+					// parachains, and the block production rate of the relay chain.
 					let message = ProvisionerMessage::ProvisionableData(
 						self.parent,
 						ProvisionableData::BackedCandidate(backed.receipt()),
 					);
-					sender.send_message(message).await;
+					sender.send_unbounded_message(message);
 
 					span.as_ref().map(|s| s.child("backed"));
 					span
@@ -835,7 +839,7 @@ impl CandidateBackingJob {
 			None
 		};
 
-		self.issue_new_misbehaviors(sender).await;
+		self.issue_new_misbehaviors(sender);
 
 		// It is important that the child span is dropped before its parent span (`unbacked_span`)
 		drop(import_statement_span);
@@ -891,16 +895,13 @@ impl CandidateBackingJob {
 		if let (Some(candidate_receipt), Some(dispute_statement)) =
 			(maybe_candidate_receipt, maybe_signed_dispute_statement)
 		{
-			// TODO: Log confirmation results in an efficient way:
-			// https://github.com/paritytech/polkadot/issues/5156
-			let (pending_confirmation, _confirmation_rx) = oneshot::channel();
 			sender
 				.send_message(DisputeCoordinatorMessage::ImportStatements {
 					candidate_hash,
 					candidate_receipt,
 					session: self.session_index,
 					statements: vec![(dispute_statement, validator_index)],
-					pending_confirmation,
+					pending_confirmation: None,
 				})
 				.await;
 		}

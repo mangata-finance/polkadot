@@ -22,9 +22,8 @@
 
 use pallet_transaction_payment::CurrencyAdapter;
 use runtime_common::{
-	auctions, claims, crowdloan, elections::OnChainSeqPhragmen, impl_runtime_weights,
-	impls::DealWithFees, paras_registrar, prod_or_fast, slots, BlockHashCount, BlockLength,
-	CurrencyToVote, SlowAdjustingFeeUpdate,
+	auctions, claims, crowdloan, impl_runtime_weights, impls::DealWithFees, paras_registrar,
+	prod_or_fast, slots, BlockHashCount, BlockLength, CurrencyToVote, SlowAdjustingFeeUpdate,
 };
 
 use runtime_parachains::{
@@ -38,14 +37,11 @@ use runtime_parachains::{
 
 use authority_discovery_primitives::AuthorityId as AuthorityDiscoveryId;
 use beefy_primitives::crypto::AuthorityId as BeefyId;
-use frame_election_provider_support::{
-	generate_solution_type, onchain::UnboundedExecution, SequentialPhragmen,
-};
+use frame_election_provider_support::{generate_solution_type, onchain, SequentialPhragmen};
 use frame_support::{
 	construct_runtime, parameter_types,
 	traits::{
-		Contains, EnsureOneOf, InstanceFilter, KeyOwnerProofSystem, LockIdentifier,
-		OnRuntimeUpgrade, PrivilegeCmp,
+		Contains, EnsureOneOf, InstanceFilter, KeyOwnerProofSystem, LockIdentifier, PrivilegeCmp,
 	},
 	weights::ConstantMultiplier,
 	PalletId, RuntimeDebug,
@@ -53,17 +49,18 @@ use frame_support::{
 use frame_system::EnsureRoot;
 use pallet_grandpa::{fg_primitives, AuthorityId as GrandpaId};
 use pallet_im_online::sr25519::AuthorityId as ImOnlineId;
-use pallet_mmr_primitives as mmr;
 use pallet_session::historical as session_historical;
 use pallet_transaction_payment::{FeeDetails, RuntimeDispatchInfo};
 use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 use primitives::v2::{
-	AccountId, AccountIndex, Balance, BlockNumber, CandidateEvent, CommittedCandidateReceipt,
-	CoreState, GroupRotationInfo, Hash, Id as ParaId, InboundDownwardMessage, InboundHrmpMessage,
-	Moment, Nonce, OccupiedCoreAssumption, PersistedValidationData, ScrapedOnChainVotes,
-	SessionInfo, Signature, ValidationCode, ValidationCodeHash, ValidatorId, ValidatorIndex,
+	AccountId, AccountIndex, Balance, BlockNumber, CandidateEvent, CandidateHash,
+	CommittedCandidateReceipt, CoreState, DisputeState, GroupRotationInfo, Hash, Id as ParaId,
+	InboundDownwardMessage, InboundHrmpMessage, Moment, Nonce, OccupiedCoreAssumption,
+	PersistedValidationData, ScrapedOnChainVotes, SessionInfo, Signature, ValidationCode,
+	ValidationCodeHash, ValidatorId, ValidatorIndex,
 };
 use sp_core::OpaqueMetadata;
+use sp_mmr_primitives as mmr;
 use sp_runtime::{
 	create_runtime_str,
 	curve::PiecewiseLinear,
@@ -113,7 +110,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	spec_name: create_runtime_str!("polkadot"),
 	impl_name: create_runtime_str!("parity-polkadot"),
 	authoring_version: 0,
-	spec_version: 9190,
+	spec_version: 9200,
 	impl_version: 0,
 	#[cfg(not(feature = "disable-runtime-api"))]
 	apis: RUNTIME_API_VERSIONS,
@@ -472,6 +469,14 @@ generate_solution_type!(
 	>(16)
 );
 
+pub struct OnChainSeqPhragmen;
+impl onchain::Config for OnChainSeqPhragmen {
+	type System = Runtime;
+	type Solver = SequentialPhragmen<AccountId, runtime_common::elections::OnChainAccuracy>;
+	type DataProvider = Staking;
+	type WeightInfo = weights::frame_election_provider_support::WeightInfo<Runtime>;
+}
+
 impl pallet_election_provider_multi_phase::Config for Runtime {
 	type Event = Event;
 	type Currency = Balances;
@@ -494,7 +499,7 @@ impl pallet_election_provider_multi_phase::Config for Runtime {
 	type DataProvider = Staking;
 	type Solution = NposCompactSolution16;
 	type Fallback = pallet_election_provider_multi_phase::NoFallback<Self>;
-	type GovernanceFallback = UnboundedExecution<OnChainSeqPhragmen<Self, Staking>>;
+	type GovernanceFallback = onchain::UnboundedExecution<OnChainSeqPhragmen>;
 	type Solver = SequentialPhragmen<
 		AccountId,
 		pallet_election_provider_multi_phase::SolutionAccuracyOf<Self>,
@@ -559,6 +564,7 @@ type SlashCancelOrigin = EnsureOneOf<
 impl pallet_staking::Config for Runtime {
 	type MaxNominations = MaxNominations;
 	type Currency = Balances;
+	type CurrencyBalance = Balance;
 	type UnixTime = Timestamp;
 	type CurrencyToVote = CurrencyToVote;
 	type RewardRemainder = Treasury;
@@ -576,10 +582,11 @@ impl pallet_staking::Config for Runtime {
 	type OffendingValidatorsThreshold = OffendingValidatorsThreshold;
 	type NextNewSession = Session;
 	type ElectionProvider = ElectionProviderMultiPhase;
-	type GenesisElectionProvider = runtime_common::elections::GenesisElectionOf<Self, Staking>;
+	type GenesisElectionProvider = onchain::UnboundedExecution<OnChainSeqPhragmen>;
 	type VoterList = BagsList;
 	type MaxUnlockingChunks = frame_support::traits::ConstU32<32>;
 	type BenchmarkingConfig = runtime_common::StakingBenchmarkingConfig;
+	type OnStakerSlash = ();
 	type WeightInfo = weights::pallet_staking::WeightInfo<Runtime>;
 }
 
@@ -1478,31 +1485,10 @@ pub type Executive = frame_executive::Executive<
 	frame_system::ChainContext<Runtime>,
 	Runtime,
 	AllPalletsWithSystem,
-	(
-		SlotsCrowdloanIndexMigration,
-		pallet_staking::migrations::v9::InjectValidatorsIntoVoterList<Runtime>,
-	),
+	(),
 >;
 /// The payload being signed in transactions.
 pub type SignedPayload = generic::SignedPayload<Call, SignedExtra>;
-
-// Migration for crowdloan pallet to use fund index for account generation.
-pub struct SlotsCrowdloanIndexMigration;
-impl OnRuntimeUpgrade for SlotsCrowdloanIndexMigration {
-	fn on_runtime_upgrade() -> frame_support::weights::Weight {
-		slots::migration::slots_crowdloan_index_migration::migrate::<Runtime>()
-	}
-
-	#[cfg(feature = "try-runtime")]
-	fn pre_upgrade() -> Result<(), &'static str> {
-		slots::migration::slots_crowdloan_index_migration::pre_migrate::<Runtime>()
-	}
-
-	#[cfg(feature = "try-runtime")]
-	fn post_upgrade() -> Result<(), &'static str> {
-		slots::migration::slots_crowdloan_index_migration::post_migrate::<Runtime>()
-	}
-}
 
 #[cfg(feature = "runtime-benchmarks")]
 #[macro_use]
@@ -1536,6 +1522,7 @@ mod benches {
 		[pallet_democracy, Democracy]
 		[pallet_elections_phragmen, PhragmenElection]
 		[pallet_election_provider_multi_phase, ElectionProviderMultiPhase]
+		[frame_election_provider_support, ElectionProviderBench::<Runtime>]
 		[pallet_identity, Identity]
 		[pallet_im_online, ImOnline]
 		[pallet_indices, Indices]
@@ -1615,7 +1602,7 @@ sp_api::impl_runtime_apis! {
 		}
 	}
 
-	impl primitives::v2::ParachainHost<Block, Hash, BlockNumber> for Runtime {
+	impl primitives::runtime_api::ParachainHost<Block, Hash, BlockNumber> for Runtime {
 		fn validators() -> Vec<ValidatorId> {
 			parachains_runtime_api_impl::validators::<Runtime>()
 		}
@@ -1712,6 +1699,10 @@ sp_api::impl_runtime_apis! {
 		{
 			parachains_runtime_api_impl::validation_code_hash::<Runtime>(para_id, assumption)
 		}
+
+		fn staging_get_disputes() -> Vec<(SessionIndex, CandidateHash, DisputeState<BlockNumber>)> {
+			unimplemented!()
+		}
 	}
 
 	impl beefy_primitives::BeefyApi<Block> for Runtime {
@@ -1741,6 +1732,11 @@ sp_api::impl_runtime_apis! {
 			_leaf: mmr::EncodableOpaqueLeaf,
 			_proof: mmr::Proof<Hash>
 		) -> Result<(), mmr::Error> {
+			// dummy implementation due to lack of MMR pallet.
+			Err(mmr::Error::Verify)
+		}
+
+		fn mmr_root() -> Result<Hash, mmr::Error> {
 			// dummy implementation due to lack of MMR pallet.
 			Err(mmr::Error::Verify)
 		}
@@ -1837,7 +1833,7 @@ sp_api::impl_runtime_apis! {
 
 	impl authority_discovery_primitives::AuthorityDiscoveryApi<Block> for Runtime {
 		fn authorities() -> Vec<AuthorityDiscoveryId> {
-			AuthorityDiscovery::authorities()
+			parachains_runtime_api_impl::relevant_authority_ids::<Runtime>()
 		}
 	}
 
@@ -1895,6 +1891,7 @@ sp_api::impl_runtime_apis! {
 
 			use pallet_session_benchmarking::Pallet as SessionBench;
 			use pallet_offences_benchmarking::Pallet as OffencesBench;
+			use pallet_election_provider_support_benchmarking::Pallet as ElectionProviderBench;
 			use frame_system_benchmarking::Pallet as SystemBench;
 			use frame_benchmarking::baseline::Pallet as Baseline;
 
@@ -1916,11 +1913,13 @@ sp_api::impl_runtime_apis! {
 			// To get around that, we separated the benchmarks into its own crate.
 			use pallet_session_benchmarking::Pallet as SessionBench;
 			use pallet_offences_benchmarking::Pallet as OffencesBench;
+			use pallet_election_provider_support_benchmarking::Pallet as ElectionProviderBench;
 			use frame_system_benchmarking::Pallet as SystemBench;
 			use frame_benchmarking::baseline::Pallet as Baseline;
 
 			impl pallet_session_benchmarking::Config for Runtime {}
 			impl pallet_offences_benchmarking::Config for Runtime {}
+			impl pallet_election_provider_support_benchmarking::Config for Runtime {}
 			impl frame_system_benchmarking::Config for Runtime {}
 			impl frame_benchmarking::baseline::Config for Runtime {}
 

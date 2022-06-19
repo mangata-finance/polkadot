@@ -16,7 +16,7 @@ Run:
 
 For instance:
 ```
-./bin/changelog v0.9.19
+./bin/changelog v0.9.18
 ```
 
 A file called `release-notes.md` will be generated and can be used for the release.
@@ -59,7 +59,7 @@ decide which label will be considered.
 
 The following command allows **Hot Reload**:
 ```
-fswatch templates -e ".*\.md$" | xargs -n1 -I{} ./bin/changelog v0.9.19
+fswatch templates -e ".*\.md$" | xargs -n1 -I{} ./bin/changelog v0.9.18
 ```
 ### Caching
 
