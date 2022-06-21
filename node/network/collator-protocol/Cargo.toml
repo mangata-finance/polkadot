@@ -23,7 +23,7 @@ polkadot-node-subsystem-util = { path = "../../subsystem-util" }
 polkadot-subsystem = { package = "polkadot-node-subsystem", path = "../../subsystem" }
 
 [dev-dependencies]
-log = "0.4.13"
+log = "0.4.17"
 env_logger = "0.9.0"
 assert_matches = "1.4.0"
 
