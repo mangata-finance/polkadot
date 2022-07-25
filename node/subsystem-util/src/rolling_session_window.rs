@@ -20,22 +20,19 @@
 //! care about the state of particular blocks.
 
 pub use polkadot_node_primitives::{new_session_window_size, SessionWindowSize};
-use polkadot_primitives::{
-	v1::{Hash, SessionIndex},
-	v2::SessionInfo,
-};
+use polkadot_primitives::v2::{Hash, SessionIndex, SessionInfo};
 
 use futures::channel::oneshot;
 use polkadot_node_subsystem::{
 	errors::RuntimeApiError,
 	messages::{RuntimeApiMessage, RuntimeApiRequest},
-	overseer, SubsystemContext,
+	overseer,
 };
 use thiserror::Error;
 
 /// Sessions unavailable in state to cache.
-#[derive(Debug)]
-pub enum SessionsUnavailableKind {
+#[derive(Debug, Clone)]
+pub enum SessionsUnavailableReason {
 	/// Runtime API subsystem was unavailable.
 	RuntimeApiUnavailable(oneshot::Canceled),
 	/// The runtime API itself returned an error.
@@ -45,7 +42,7 @@ pub enum SessionsUnavailableKind {
 }
 
 /// Information about the sessions being fetched.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SessionsUnavailableInfo {
 	/// The desired window start.
 	pub window_start: SessionIndex,
@@ -56,10 +53,10 @@ pub struct SessionsUnavailableInfo {
 }
 
 /// Sessions were unavailable to fetch from the state for some reason.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub struct SessionsUnavailable {
 	/// The error kind.
-	kind: SessionsUnavailableKind,
+	kind: SessionsUnavailableReason,
 	/// The info about the session window, if any.
 	info: Option<SessionsUnavailableInfo>,
 }
@@ -97,16 +94,19 @@ pub struct RollingSessionWindow {
 
 impl RollingSessionWindow {
 	/// Initialize a new session info cache with the given window size.
-	pub async fn new(
-		ctx: &mut (impl SubsystemContext + overseer::SubsystemContext),
+	pub async fn new<Sender>(
+		mut sender: Sender,
 		window_size: SessionWindowSize,
 		block_hash: Hash,
-	) -> Result<Self, SessionsUnavailable> {
-		let session_index = get_session_index_for_head(ctx, block_hash).await?;
+	) -> Result<Self, SessionsUnavailable>
+	where
+		Sender: overseer::SubsystemSender<RuntimeApiMessage>,
+	{
+		let session_index = get_session_index_for_child(&mut sender, block_hash).await?;
 
 		let window_start = session_index.saturating_sub(window_size.get() - 1);
 
-		match load_all_sessions(ctx, block_hash, window_start, session_index).await {
+		match load_all_sessions(&mut sender, block_hash, window_start, session_index).await {
 			Err(kind) => Err(SessionsUnavailable {
 				kind,
 				info: Some(SessionsUnavailableInfo {
@@ -157,10 +157,10 @@ impl RollingSessionWindow {
 	/// some backwards drift in session index is acceptable.
 	pub async fn cache_session_info_for_head(
 		&mut self,
-		ctx: &mut (impl SubsystemContext + overseer::SubsystemContext),
+		sender: &mut impl overseer::SubsystemSender<RuntimeApiMessage>,
 		block_hash: Hash,
 	) -> Result<SessionWindowUpdate, SessionsUnavailable> {
-		let session_index = get_session_index_for_head(ctx, block_hash).await?;
+		let session_index = get_session_index_for_child(sender, block_hash).await?;
 
 		let old_window_start = self.earliest_session;
 
@@ -180,7 +180,7 @@ impl RollingSessionWindow {
 
 		let fresh_start = if latest < window_start { window_start } else { latest + 1 };
 
-		match load_all_sessions(ctx, block_hash, fresh_start, session_index).await {
+		match load_all_sessions(sender, block_hash, fresh_start, session_index).await {
 			Err(kind) => Err(SessionsUnavailable {
 				kind,
 				info: Some(SessionsUnavailableInfo {
@@ -212,54 +212,61 @@ impl RollingSessionWindow {
 	}
 }
 
-async fn get_session_index_for_head(
-	ctx: &mut (impl SubsystemContext + overseer::SubsystemContext),
+// Returns the session index expected at any child of the `parent` block.
+//
+// Note: We could use `RuntimeInfo::get_session_index_for_child` here but it's
+// cleaner to just call the runtime API directly without needing to create an instance
+// of `RuntimeInfo`.
+async fn get_session_index_for_child(
+	sender: &mut impl overseer::SubsystemSender<RuntimeApiMessage>,
 	block_hash: Hash,
 ) -> Result<SessionIndex, SessionsUnavailable> {
 	let (s_tx, s_rx) = oneshot::channel();
 
 	// We're requesting session index of a child to populate the cache in advance.
-	ctx.send_message(RuntimeApiMessage::Request(
-		block_hash,
-		RuntimeApiRequest::SessionIndexForChild(s_tx),
-	))
-	.await;
+	sender
+		.send_message(RuntimeApiMessage::Request(
+			block_hash,
+			RuntimeApiRequest::SessionIndexForChild(s_tx),
+		))
+		.await;
 
 	match s_rx.await {
 		Ok(Ok(s)) => Ok(s),
 		Ok(Err(e)) =>
 			return Err(SessionsUnavailable {
-				kind: SessionsUnavailableKind::RuntimeApi(e),
+				kind: SessionsUnavailableReason::RuntimeApi(e),
 				info: None,
 			}),
 		Err(e) =>
 			return Err(SessionsUnavailable {
-				kind: SessionsUnavailableKind::RuntimeApiUnavailable(e),
+				kind: SessionsUnavailableReason::RuntimeApiUnavailable(e),
 				info: None,
 			}),
 	}
 }
 
 async fn load_all_sessions(
-	ctx: &mut (impl SubsystemContext + overseer::SubsystemContext),
+	sender: &mut impl overseer::SubsystemSender<RuntimeApiMessage>,
 	block_hash: Hash,
 	start: SessionIndex,
 	end_inclusive: SessionIndex,
-) -> Result<Vec<SessionInfo>, SessionsUnavailableKind> {
+) -> Result<Vec<SessionInfo>, SessionsUnavailableReason> {
 	let mut v = Vec::new();
 	for i in start..=end_inclusive {
 		let (tx, rx) = oneshot::channel();
-		ctx.send_message(RuntimeApiMessage::Request(
-			block_hash,
-			RuntimeApiRequest::SessionInfo(i, tx),
-		))
-		.await;
+		sender
+			.send_message(RuntimeApiMessage::Request(
+				block_hash,
+				RuntimeApiRequest::SessionInfo(i, tx),
+			))
+			.await;
 
 		let session_info = match rx.await {
 			Ok(Ok(Some(s))) => s,
-			Ok(Ok(None)) => return Err(SessionsUnavailableKind::Missing(i)),
-			Ok(Err(e)) => return Err(SessionsUnavailableKind::RuntimeApi(e)),
-			Err(canceled) => return Err(SessionsUnavailableKind::RuntimeApiUnavailable(canceled)),
+			Ok(Ok(None)) => return Err(SessionsUnavailableReason::Missing(i)),
+			Ok(Err(e)) => return Err(SessionsUnavailableReason::RuntimeApi(e)),
+			Err(canceled) => return Err(SessionsUnavailableReason::RuntimeApiUnavailable(canceled)),
 		};
 
 		v.push(session_info);
@@ -272,9 +279,12 @@ async fn load_all_sessions(
 mod tests {
 	use super::*;
 	use assert_matches::assert_matches;
-	use polkadot_node_subsystem::messages::{AllMessages, AvailabilityRecoveryMessage};
+	use polkadot_node_subsystem::{
+		messages::{AllMessages, AvailabilityRecoveryMessage},
+		SubsystemContext,
+	};
 	use polkadot_node_subsystem_test_helpers::make_subsystem_context;
-	use polkadot_primitives::v1::Header;
+	use polkadot_primitives::v2::Header;
 	use sp_core::testing::TaskExecutor;
 
 	pub const TEST_WINDOW_SIZE: SessionWindowSize = new_session_window_size!(6);
@@ -317,13 +327,16 @@ mod tests {
 
 		let hash = header.hash();
 
+		let sender = ctx.sender();
+
 		let test_fut = {
 			Box::pin(async move {
 				let window = match window {
-					None =>
-						RollingSessionWindow::new(&mut ctx, TEST_WINDOW_SIZE, hash).await.unwrap(),
+					None => RollingSessionWindow::new(sender.clone(), TEST_WINDOW_SIZE, hash)
+						.await
+						.unwrap(),
 					Some(mut window) => {
-						window.cache_session_info_for_head(&mut ctx, hash).await.unwrap();
+						window.cache_session_info_for_head(sender, hash).await.unwrap();
 						window
 					},
 				};
@@ -493,8 +506,9 @@ mod tests {
 		let hash = header.hash();
 
 		let test_fut = {
+			let sender = ctx.sender().clone();
 			Box::pin(async move {
-				let res = RollingSessionWindow::new(&mut ctx, TEST_WINDOW_SIZE, hash).await;
+				let res = RollingSessionWindow::new(sender, TEST_WINDOW_SIZE, hash).await;
 				assert!(res.is_err());
 			})
 		};
@@ -553,8 +567,9 @@ mod tests {
 
 		let test_fut = {
 			Box::pin(async move {
+				let sender = ctx.sender().clone();
 				let window =
-					RollingSessionWindow::new(&mut ctx, TEST_WINDOW_SIZE, hash).await.unwrap();
+					RollingSessionWindow::new(sender, TEST_WINDOW_SIZE, hash).await.unwrap();
 
 				assert_eq!(window.earliest_session, session);
 				assert_eq!(window.session_info, vec![dummy_session_info(session)]);

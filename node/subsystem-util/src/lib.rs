@@ -26,15 +26,13 @@
 
 use polkadot_node_subsystem::{
 	errors::{RuntimeApiError, SubsystemError},
-	messages::{
-		AllMessages, BoundToRelayParent, RuntimeApiMessage, RuntimeApiRequest, RuntimeApiSender,
-	},
-	overseer, ActivatedLeaf, ActiveLeavesUpdate, FromOverseer, OverseerSignal, SpawnedSubsystem,
+	messages::{BoundToRelayParent, RuntimeApiMessage, RuntimeApiRequest, RuntimeApiSender},
+	overseer, ActivatedLeaf, ActiveLeavesUpdate, FromOrchestra, OverseerSignal, SpawnedSubsystem,
 	SubsystemContext, SubsystemSender,
 };
 
 pub use overseer::{
-	gen::{OverseerError, Timeout},
+	gen::{OrchestraError as OverseerError, Timeout},
 	Subsystem, TimeoutExt,
 };
 
@@ -49,21 +47,19 @@ use futures::{
 use parity_scale_codec::Encode;
 use pin_project::pin_project;
 
-use polkadot_primitives::{
-	v1::{
-		AuthorityDiscoveryId, CandidateEvent, CommittedCandidateReceipt, CoreState, EncodeAs,
-		GroupIndex, GroupRotationInfo, Hash, Id as ParaId, OccupiedCoreAssumption,
-		PersistedValidationData, SessionIndex, Signed, SigningContext, ValidationCode,
-		ValidationCodeHash, ValidatorId, ValidatorIndex, ValidatorSignature,
-	},
-	v2::SessionInfo,
+use polkadot_primitives::v2::{
+	AuthorityDiscoveryId, CandidateEvent, CommittedCandidateReceipt, CoreState, EncodeAs,
+	GroupIndex, GroupRotationInfo, Hash, Id as ParaId, OccupiedCoreAssumption,
+	PersistedValidationData, ScrapedOnChainVotes, SessionIndex, SessionInfo, Signed,
+	SigningContext, ValidationCode, ValidationCodeHash, ValidatorId, ValidatorIndex,
+	ValidatorSignature,
 };
+pub use rand;
 use sp_application_crypto::AppKey;
-use sp_core::{traits::SpawnNamed, ByteArray};
+use sp_core::ByteArray;
 use sp_keystore::{CryptoStore, Error as KeystoreError, SyncCryptoStorePtr};
 use std::{
 	collections::{hash_map::Entry, HashMap},
-	convert::TryFrom,
 	fmt,
 	marker::Unpin,
 	pin::Pin,
@@ -72,20 +68,23 @@ use std::{
 };
 use thiserror::Error;
 
-pub use metered_channel as metered;
+pub use metered;
 pub use polkadot_node_network_protocol::MIN_GOSSIP_PEERS;
 
 pub use determine_new_blocks::determine_new_blocks;
 
 /// These reexports are required so that external crates can use the `delegated_subsystem` macro properly.
 pub mod reexports {
-	pub use polkadot_overseer::gen::{SpawnNamed, SpawnedSubsystem, Subsystem, SubsystemContext};
+	pub use polkadot_overseer::gen::{SpawnedSubsystem, Spawner, Subsystem, SubsystemContext};
 }
 
 /// A rolling session window cache.
 pub mod rolling_session_window;
 /// Convenient and efficient runtime info access.
 pub mod runtime;
+
+/// Database trait for subsystem.
+pub mod database;
 
 mod determine_new_blocks;
 
@@ -143,7 +142,7 @@ pub async fn request_from_runtime<RequestBuilder, Response, Sender>(
 ) -> RuntimeApiReceiver<Response>
 where
 	RequestBuilder: FnOnce(RuntimeApiSender<Response>) -> RuntimeApiRequest,
-	Sender: SubsystemSender,
+	Sender: SubsystemSender<RuntimeApiMessage>,
 {
 	let (tx, rx) = oneshot::channel();
 
@@ -175,7 +174,7 @@ macro_rules! specialize_requests {
 			$(
 				$param_name: $param_ty,
 			)*
-			sender: &mut impl SubsystemSender,
+			sender: &mut impl overseer::SubsystemSender<RuntimeApiMessage>,
 		) -> RuntimeApiReceiver<$return_ty>
 		{
 			request_from_runtime(parent, sender, |tx| RuntimeApiRequest::$request_variant(
@@ -217,6 +216,7 @@ specialize_requests! {
 	fn request_session_info(index: SessionIndex) -> Option<SessionInfo>; SessionInfo;
 	fn request_validation_code_hash(para_id: ParaId, assumption: OccupiedCoreAssumption)
 		-> Option<ValidationCodeHash>; ValidationCodeHash;
+	fn request_on_chain_votes() -> Option<ScrapedOnChainVotes>; FetchOnChainVotes;
 }
 
 /// From the given set of validators, find the first key we can sign with, if any.
@@ -250,8 +250,6 @@ pub async fn sign(
 	key: &ValidatorId,
 	data: &[u8],
 ) -> Result<Option<ValidatorSignature>, KeystoreError> {
-	use std::convert::TryInto;
-
 	let signature =
 		CryptoStore::sign_with(&**keystore, ValidatorId::ID, &key.into(), &data).await?;
 
@@ -278,33 +276,41 @@ pub fn find_validator_group(
 
 /// Choose a random subset of `min` elements.
 /// But always include `is_priority` elements.
-pub fn choose_random_subset<T, F: FnMut(&T) -> bool>(
+pub fn choose_random_subset<T, F: FnMut(&T) -> bool>(is_priority: F, v: &mut Vec<T>, min: usize) {
+	choose_random_subset_with_rng(is_priority, v, &mut rand::thread_rng(), min)
+}
+
+/// Choose a random subset of `min` elements using a specific Random Generator `Rng`
+/// But always include `is_priority` elements.
+pub fn choose_random_subset_with_rng<T, F: FnMut(&T) -> bool, R: rand::Rng>(
 	is_priority: F,
-	mut v: Vec<T>,
+	v: &mut Vec<T>,
+	rng: &mut R,
 	min: usize,
-) -> Vec<T> {
+) {
 	use rand::seq::SliceRandom as _;
 
 	// partition the elements into priority first
 	// the returned index is when non_priority elements start
-	let i = itertools::partition(&mut v, is_priority);
+	let i = itertools::partition(v.iter_mut(), is_priority);
 
 	if i >= min || v.len() <= i {
 		v.truncate(i);
-		return v
+		return
 	}
 
-	let mut rng = rand::thread_rng();
-	v[i..].shuffle(&mut rng);
+	v[i..].shuffle(rng);
 
 	v.truncate(min);
-	v
 }
 
 /// Returns a `bool` with a probability of `a / b` of being true.
 pub fn gen_ratio(a: usize, b: usize) -> bool {
-	use rand::Rng as _;
-	let mut rng = rand::thread_rng();
+	gen_ratio_rng(a, b, &mut rand::thread_rng())
+}
+
+/// Returns a `bool` with a probability of `a / b` of being true.
+pub fn gen_ratio_rng<R: rand::Rng>(a: usize, b: usize, rng: &mut R) -> bool {
 	rng.gen_ratio(a as u32, b as u32)
 }
 
@@ -321,11 +327,14 @@ pub struct Validator {
 
 impl Validator {
 	/// Get a struct representing this node's validator if this node is in fact a validator in the context of the given block.
-	pub async fn new(
+	pub async fn new<S>(
 		parent: Hash,
 		keystore: SyncCryptoStorePtr,
-		sender: &mut impl SubsystemSender,
-	) -> Result<Self, Error> {
+		sender: &mut S,
+	) -> Result<Self, Error>
+	where
+		S: SubsystemSender<RuntimeApiMessage>,
+	{
 		// Note: request_validators and request_session_index_for_child do not and cannot
 		// run concurrently: they both have a mutable handle to the same sender.
 		// However, each of them returns a oneshot::Receiver, and those are resolved concurrently.
@@ -389,14 +398,14 @@ impl Drop for AbortOnDrop {
 }
 
 /// A `JobHandle` manages a particular job for a subsystem.
-struct JobHandle<ToJob> {
+struct JobHandle<Consumes> {
 	_abort_handle: AbortOnDrop,
-	to_job: mpsc::Sender<ToJob>,
+	to_job: mpsc::Sender<Consumes>,
 }
 
-impl<ToJob> JobHandle<ToJob> {
+impl<Consumes> JobHandle<Consumes> {
 	/// Send a message to the job.
-	async fn send_msg(&mut self, msg: ToJob) -> Result<(), Error> {
+	async fn send_msg(&mut self, msg: Consumes) -> Result<(), Error> {
 		self.to_job.send(msg).await.map_err(Into::into)
 	}
 }
@@ -410,47 +419,23 @@ pub enum FromJobCommand {
 }
 
 /// A sender for messages from jobs, as well as commands to the overseer.
-pub struct JobSender<S: SubsystemSender> {
+pub struct JobSender<S> {
 	sender: S,
 	from_job: mpsc::Sender<FromJobCommand>,
 }
 
 // A custom clone impl, since M does not need to impl `Clone`
 // which `#[derive(Clone)]` requires.
-impl<S: SubsystemSender> Clone for JobSender<S> {
+impl<S: Clone> Clone for JobSender<S> {
 	fn clone(&self) -> Self {
 		Self { sender: self.sender.clone(), from_job: self.from_job.clone() }
 	}
 }
 
-impl<S: SubsystemSender> JobSender<S> {
+impl<S> JobSender<S> {
 	/// Get access to the underlying subsystem sender.
 	pub fn subsystem_sender(&mut self) -> &mut S {
 		&mut self.sender
-	}
-
-	/// Send a direct message to some other `Subsystem`, routed based on message type.
-	pub async fn send_message(&mut self, msg: impl Into<AllMessages>) {
-		self.sender.send_message(msg.into()).await
-	}
-
-	/// Send multiple direct messages to other `Subsystem`s, routed based on message type.
-	pub async fn send_messages<T, M>(&mut self, msgs: T)
-	where
-		T: IntoIterator<Item = M> + Send,
-		T::IntoIter: Send,
-		M: Into<AllMessages>,
-	{
-		self.sender.send_messages(msgs.into_iter().map(|m| m.into())).await
-	}
-
-	/// Send a message onto the unbounded queue of some other `Subsystem`, routed based on message
-	/// type.
-	///
-	/// This function should be used only when there is some other bounding factor on the messages
-	/// sent with it. Otherwise, it risks a memory leak.
-	pub fn send_unbounded_message(&mut self, msg: impl Into<AllMessages>) {
-		self.sender.send_unbounded_message(msg.into())
 	}
 
 	/// Send a command to the subsystem, to be relayed onwards to the overseer.
@@ -462,23 +447,23 @@ impl<S: SubsystemSender> JobSender<S> {
 #[async_trait::async_trait]
 impl<S, M> overseer::SubsystemSender<M> for JobSender<S>
 where
-	M: Send + 'static + Into<AllMessages>,
-	S: SubsystemSender + Clone,
+	M: Send + 'static,
+	S: SubsystemSender<M> + Clone,
 {
 	async fn send_message(&mut self, msg: M) {
-		self.sender.send_message(msg.into()).await
+		self.sender.send_message(msg).await
 	}
 
-	async fn send_messages<T>(&mut self, msgs: T)
+	async fn send_messages<I>(&mut self, msgs: I)
 	where
-		T: IntoIterator<Item = M> + Send,
-		T::IntoIter: Send,
+		I: IntoIterator<Item = M> + Send,
+		I::IntoIter: Send,
 	{
-		self.sender.send_messages(msgs.into_iter().map(|m| m.into())).await
+		self.sender.send_messages(msgs).await
 	}
 
 	fn send_unbounded_message(&mut self, msg: M) {
-		self.sender.send_unbounded_message(msg.into())
+		self.sender.send_unbounded_message(msg)
 	}
 }
 
@@ -498,6 +483,14 @@ impl fmt::Debug for FromJobCommand {
 pub trait JobTrait: Unpin + Sized {
 	/// Message type used to send messages to the job.
 	type ToJob: 'static + BoundToRelayParent + Send;
+
+	/// The set of outgoing messages to be accumulated into.
+	type OutgoingMessages: 'static + Send;
+
+	/// The sender to send outgoing messages.
+	// The trait bounds are rather minimal.
+	type Sender: 'static + Send + Clone;
+
 	/// Job runtime error.
 	type Error: 'static + std::error::Error + Send;
 	/// Extra arguments this job needs to run properly.
@@ -517,12 +510,12 @@ pub trait JobTrait: Unpin + Sized {
 	/// Run a job for the given relay `parent`.
 	///
 	/// The job should be ended when `receiver` returns `None`.
-	fn run<S: SubsystemSender>(
+	fn run(
 		leaf: ActivatedLeaf,
 		run_args: Self::RunArgs,
 		metrics: Self::Metrics,
 		receiver: mpsc::Receiver<Self::ToJob>,
-		sender: JobSender<S>,
+		sender: JobSender<Self::Sender>,
 	) -> Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>;
 }
 
@@ -555,7 +548,7 @@ struct Jobs<Spawner, ToJob> {
 
 impl<Spawner, ToJob> Jobs<Spawner, ToJob>
 where
-	Spawner: SpawnNamed,
+	Spawner: overseer::gen::Spawner + Clone,
 	ToJob: Send + 'static,
 {
 	/// Create a new Jobs manager which handles spawning appropriate jobs.
@@ -564,15 +557,14 @@ where
 	}
 
 	/// Spawn a new job for this `parent_hash`, with whatever args are appropriate.
-	fn spawn_job<Job, Sender>(
+	fn spawn_job<Job>(
 		&mut self,
 		leaf: ActivatedLeaf,
 		run_args: Job::RunArgs,
 		metrics: Job::Metrics,
-		sender: Sender,
+		sender: Job::Sender,
 	) where
 		Job: JobTrait<ToJob = ToJob>,
-		Sender: SubsystemSender,
 	{
 		let hash = leaf.hash;
 		let (to_job_tx, to_job_rx) = mpsc::channel(JOB_CHANNEL_CAPACITY);
@@ -588,7 +580,7 @@ where
 			)
 			.await
 			{
-				tracing::error!(
+				gum::error!(
 					job = Job::NAME,
 					parent_hash = %hash,
 					err = ?e,
@@ -630,7 +622,7 @@ where
 
 impl<Spawner, ToJob> Stream for Jobs<Spawner, ToJob>
 where
-	Spawner: SpawnNamed,
+	Spawner: overseer::gen::Spawner + Clone,
 {
 	type Item = FromJobCommand;
 
@@ -645,7 +637,7 @@ where
 
 impl<Spawner, ToJob> stream::FusedStream for Jobs<Spawner, ToJob>
 where
-	Spawner: SpawnNamed,
+	Spawner: overseer::gen::Spawner + Clone,
 {
 	fn is_terminated(&self) -> bool {
 		false
@@ -688,9 +680,13 @@ impl<Job: JobTrait, Spawner> JobSubsystem<Job, Spawner> {
 	/// Run the subsystem to completion.
 	pub async fn run<Context>(self, mut ctx: Context)
 	where
-		Spawner: SpawnNamed + Send + Clone + Unpin + 'static,
-		Context: SubsystemContext<Message = <Job as JobTrait>::ToJob, Signal = OverseerSignal>,
-		<Context as SubsystemContext>::Sender: SubsystemSender,
+		Spawner: overseer::gen::Spawner + Clone + Unpin + 'static,
+		Context: SubsystemContext<
+			Message = <Job as JobTrait>::ToJob,
+			OutgoingMessages = <Job as JobTrait>::OutgoingMessages,
+			Sender = <Job as JobTrait>::Sender,
+			Signal = OverseerSignal,
+		>,
 		Job: 'static + JobTrait + Send,
 		<Job as JobTrait>::RunArgs: Clone + Sync,
 		<Job as JobTrait>::ToJob:
@@ -705,13 +701,13 @@ impl<Job: JobTrait, Spawner> JobSubsystem<Job, Spawner> {
 			select! {
 				incoming = ctx.recv().fuse() => {
 					match incoming {
-						Ok(FromOverseer::Signal(OverseerSignal::ActiveLeaves(ActiveLeavesUpdate {
+						Ok(FromOrchestra::Signal(OverseerSignal::ActiveLeaves(ActiveLeavesUpdate {
 							activated,
 							deactivated,
 						}))) => {
 							for activated in activated {
 								let sender = ctx.sender().clone();
-								jobs.spawn_job::<Job, _>(
+								jobs.spawn_job::<Job>(
 									activated,
 									run_args.clone(),
 									metrics.clone(),
@@ -723,18 +719,18 @@ impl<Job: JobTrait, Spawner> JobSubsystem<Job, Spawner> {
 								jobs.stop_job(hash).await;
 							}
 						}
-						Ok(FromOverseer::Signal(OverseerSignal::Conclude)) => {
+						Ok(FromOrchestra::Signal(OverseerSignal::Conclude)) => {
 							jobs.running.clear();
 							break;
 						}
-						Ok(FromOverseer::Signal(OverseerSignal::BlockFinalized(..))) => {}
-						Ok(FromOverseer::Communication { msg }) => {
+						Ok(FromOrchestra::Signal(OverseerSignal::BlockFinalized(..))) => {}
+						Ok(FromOrchestra::Communication { msg }) => {
 							if let Ok(to_job) = <<Context as SubsystemContext>::Message>::try_from(msg) {
 								jobs.send_msg(to_job.relay_parent(), to_job).await;
 							}
 						}
 						Err(err) => {
-							tracing::error!(
+							gum::error!(
 								job = Job::NAME,
 								err = ?err,
 								"error receiving message from subsystem context for job",
@@ -753,7 +749,7 @@ impl<Job: JobTrait, Spawner> JobSubsystem<Job, Spawner> {
 					};
 
 					if let Err(e) = res {
-						tracing::warn!(err = ?e, "failed to handle command from job");
+						gum::warn!(err = ?e, "failed to handle command from job");
 					}
 				}
 				complete => break,
@@ -764,12 +760,16 @@ impl<Job: JobTrait, Spawner> JobSubsystem<Job, Spawner> {
 
 impl<Context, Job, Spawner> Subsystem<Context, SubsystemError> for JobSubsystem<Job, Spawner>
 where
-	Spawner: SpawnNamed + Send + Clone + Unpin + 'static,
-	Context: SubsystemContext<Message = Job::ToJob, Signal = OverseerSignal>,
+	Spawner: overseer::gen::Spawner + Clone + Unpin + 'static,
+	Context: SubsystemContext<
+		Message = Job::ToJob,
+		Signal = OverseerSignal,
+		OutgoingMessages = <Job as JobTrait>::OutgoingMessages,
+		Sender = <Job as JobTrait>::Sender,
+	>,
 	Job: 'static + JobTrait + Send,
 	Job::RunArgs: Clone + Sync,
-	<Job as JobTrait>::ToJob:
-		Sync + From<<Context as polkadot_overseer::SubsystemContext>::Message>,
+	<Job as JobTrait>::ToJob: Sync + From<<Context as SubsystemContext>::Message>,
 	Job::Metrics: Sync,
 {
 	fn start(self, ctx: Context) -> SpawnedSubsystem {

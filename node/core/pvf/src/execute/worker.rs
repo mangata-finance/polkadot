@@ -15,7 +15,7 @@
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
 use crate::{
-	artifacts::{ArtifactPathId, CompiledArtifact},
+	artifacts::ArtifactPathId,
 	executor_intf::TaskExecutor,
 	worker_common::{
 		bytes_to_path, framed_recv, framed_send, path_to_bytes, spawn_with_program_path,
@@ -72,7 +72,7 @@ pub async fn start_work(
 ) -> Outcome {
 	let IdleWorker { mut stream, pid } = worker;
 
-	tracing::debug!(
+	gum::debug!(
 		target: LOG_TARGET,
 		worker_pid = %pid,
 		validation_code_hash = ?artifact.id.code_hash,
@@ -81,7 +81,7 @@ pub async fn start_work(
 	);
 
 	if let Err(error) = send_request(&mut stream, &artifact.path, &validation_params).await {
-		tracing::warn!(
+		gum::warn!(
 			target: LOG_TARGET,
 			worker_pid = %pid,
 			validation_code_hash = ?artifact.id.code_hash,
@@ -95,7 +95,7 @@ pub async fn start_work(
 		response = recv_response(&mut stream).fuse() => {
 			match response {
 				Err(error) => {
-					tracing::warn!(
+					gum::warn!(
 						target: LOG_TARGET,
 						worker_pid = %pid,
 						validation_code_hash = ?artifact.id.code_hash,
@@ -108,7 +108,7 @@ pub async fn start_work(
 			}
 		},
 		_ = Delay::new(execution_timeout).fuse() => {
-			tracing::warn!(
+			gum::warn!(
 				target: LOG_TARGET,
 				worker_pid = %pid,
 				validation_code_hash = ?artifact.id.code_hash,
@@ -189,7 +189,7 @@ pub fn worker_entrypoint(socket_path: &str) {
 		})?;
 		loop {
 			let (artifact_path, params) = recv_request(&mut stream).await?;
-			tracing::debug!(
+			gum::debug!(
 				target: LOG_TARGET,
 				worker_pid = %std::process::id(),
 				"worker: validating artifact {}",
@@ -206,29 +206,12 @@ async fn validate_using_artifact(
 	params: &[u8],
 	spawner: &TaskExecutor,
 ) -> Response {
-	let artifact_bytes = match async_std::fs::read(artifact_path).await {
-		Err(e) =>
-			return Response::InternalError(format!(
-				"failed to read the artifact at {}: {:?}",
-				artifact_path.display(),
-				e,
-			)),
-		Ok(b) => b,
-	};
-
-	let artifact = match CompiledArtifact::decode(&mut artifact_bytes.as_slice()) {
-		Err(e) => return Response::InternalError(format!("artifact deserialization: {:?}", e)),
-		Ok(a) => a,
-	};
-
-	let compiled_artifact = artifact.as_ref();
-
 	let validation_started_at = Instant::now();
 	let descriptor_bytes = match unsafe {
 		// SAFETY: this should be safe since the compiled artifact passed here comes from the
 		//         file created by the prepare workers. These files are obtained by calling
 		//         [`executor_intf::prepare`].
-		crate::executor_intf::execute(compiled_artifact, params, spawner.clone())
+		crate::executor_intf::execute(artifact_path.as_ref(), params, spawner.clone())
 	} {
 		Err(err) => return Response::format_invalid("execute", &err.to_string()),
 		Ok(d) => d,

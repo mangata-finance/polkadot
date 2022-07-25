@@ -25,7 +25,7 @@ use futures::future::Future;
 use polkadot_node_primitives::{CollationGenerationConfig, CollatorFn};
 use polkadot_node_subsystem::messages::{CollationGenerationMessage, CollatorProtocolMessage};
 use polkadot_overseer::Handle;
-use polkadot_primitives::v1::{Balance, CollatorPair, HeadData, Id as ParaId, ValidationCode};
+use polkadot_primitives::v2::{Balance, CollatorPair, HeadData, Id as ParaId, ValidationCode};
 use polkadot_runtime_common::BlockHashCount;
 use polkadot_runtime_parachains::paras::ParaGenesisArgs;
 use polkadot_service::{
@@ -41,9 +41,12 @@ use sc_network::{
 	config::{NetworkConfiguration, TransportConfig},
 	multiaddr,
 };
-use service::{
-	config::{DatabaseSource, KeystoreConfig, MultiaddrWithPeerId, WasmExecutionMethod},
-	BasePath, Configuration, KeepBlocks, Role, RpcHandlers, TaskManager, TransactionStorageMode,
+use sc_service::{
+	config::{
+		DatabaseSource, KeystoreConfig, MultiaddrWithPeerId, WasmExecutionMethod,
+		WasmtimeInstantiationStrategy,
+	},
+	BasePath, Configuration, KeepBlocks, Role, RpcHandlers, TaskManager,
 };
 use sp_arithmetic::traits::SaturatedConversion;
 use sp_blockchain::HeaderBackend;
@@ -95,7 +98,10 @@ pub fn new_full(
 		None,
 		None,
 		worker_program_path,
+		false,
 		polkadot_service::RealOverseerGen,
+		None,
+		None,
 	)
 }
 
@@ -172,9 +178,10 @@ pub fn node_config(
 		state_cache_child_ratio: None,
 		state_pruning: Default::default(),
 		keep_blocks: KeepBlocks::All,
-		transaction_storage: TransactionStorageMode::BlockBody,
 		chain_spec: Box::new(spec),
-		wasm_method: WasmExecutionMethod::Compiled,
+		wasm_method: WasmExecutionMethod::Compiled {
+			instantiation_strategy: WasmtimeInstantiationStrategy::PoolingCopyOnWrite,
+		},
 		wasm_runtime_overrides: Default::default(),
 		// NOTE: we enforce the use of the native runtime to make the errors more debuggable
 		execution_strategies: ExecutionStrategies {
@@ -188,9 +195,13 @@ pub fn node_config(
 		rpc_ws: None,
 		rpc_ipc: None,
 		rpc_max_payload: None,
+		rpc_max_request_size: None,
+		rpc_max_response_size: None,
 		rpc_ws_max_connections: None,
 		rpc_cors: None,
 		rpc_methods: Default::default(),
+		rpc_id_provider: None,
+		rpc_max_subs_per_conn: None,
 		ws_max_out_buffer_capacity: None,
 		prometheus_config: None,
 		telemetry_endpoints: None,
@@ -372,7 +383,7 @@ pub fn construct_extrinsic(
 	UncheckedExtrinsic::new_signed(
 		function.clone(),
 		polkadot_test_runtime::Address::Id(caller.public().into()),
-		polkadot_primitives::v0::Signature::Sr25519(signature.clone()),
+		polkadot_primitives::v2::Signature::Sr25519(signature.clone()),
 		extra.clone(),
 	)
 }
