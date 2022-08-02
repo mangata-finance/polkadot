@@ -26,7 +26,7 @@ sc-keystore = { git = "https://github.com/paritytech/substrate", branch = "polka
 sc-basic-authorship = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 sc-offchain = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 sc-sysinfo = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
-service = { package = "sc-service", git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.26" }
+service = { package = "sc-service", git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-v0.9.26" }
 telemetry = { package = "sc-telemetry", git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 
 # Substrate Primitives

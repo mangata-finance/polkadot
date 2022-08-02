@@ -80,7 +80,7 @@ impl<T: frame_system::Config> pallet_democracy::WeightInfo for WeightInfo<T> {
 	fn vote_existing(r: u32, ) -> Weight {
 		(36_124_000 as Weight)
 			// Standard Error: 0
-			.saturating_add((134_000 as Weight).saturating_mul(r as Weight))
+			.saturating_add((131_000 as Weight).saturating_mul(r as Weight))
 			.saturating_add(T::DbWeight::get().reads(3 as Weight))
 			.saturating_add(T::DbWeight::get().writes(3 as Weight))
 	}
@@ -101,7 +101,7 @@ impl<T: frame_system::Config> pallet_democracy::WeightInfo for WeightInfo<T> {
 	fn blacklist(p: u32, ) -> Weight {
 		(53_932_000 as Weight)
 			// Standard Error: 3_000
-			.saturating_add((207_000 as Weight).saturating_mul(p as Weight))
+			.saturating_add((196_000 as Weight).saturating_mul(p as Weight))
 			.saturating_add(T::DbWeight::get().reads(5 as Weight))
 			.saturating_add(T::DbWeight::get().writes(6 as Weight))
 	}

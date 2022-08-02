@@ -28,12 +28,12 @@ sp-consensus-babe = { git = "https://github.com/paritytech/substrate", branch = 
 sp-transaction-pool = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 sp-offchain = { package = "sp-offchain", git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 sp-block-builder = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
-sp-mmr-primitives = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.26" }
+sp-mmr-primitives = { git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-v0.9.26" }
 
 sc-consensus = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 sc-executor = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 sc-client-api = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
-sc-service = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.26" }
+sc-service = { git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-v0.9.26" }
 
 beefy-primitives = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 

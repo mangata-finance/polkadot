@@ -96,7 +96,7 @@ impl<T: frame_system::Config> pallet_collective::WeightInfo for WeightInfo<T> {
 	fn propose_proposed(b: u32, m: u32, p: u32, ) -> Weight {
 		(25_865_000 as Weight)
 			// Standard Error: 0
-			.saturating_add((3_000 as Weight).saturating_mul(b as Weight))
+			.saturating_add((4_000 as Weight).saturating_mul(b as Weight))
 			// Standard Error: 0
 			.saturating_add((38_000 as Weight).saturating_mul(m as Weight))
 			// Standard Error: 0

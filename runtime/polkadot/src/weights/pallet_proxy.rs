@@ -135,7 +135,7 @@ impl<T: frame_system::Config> pallet_proxy::WeightInfo for WeightInfo<T> {
 	fn anonymous(p: u32, ) -> Weight {
 		(28_745_000 as Weight)
 			// Standard Error: 2_000
-			.saturating_add((29_000 as Weight).saturating_mul(p as Weight))
+			.saturating_add((34_000 as Weight).saturating_mul(p as Weight))
 			.saturating_add(T::DbWeight::get().reads(2 as Weight))
 			.saturating_add(T::DbWeight::get().writes(1 as Weight))
 	}

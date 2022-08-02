@@ -26,111 +26,110 @@ workflow:
     - if: $CI_COMMIT_BRANCH
 
 variables:
-  GIT_STRATEGY:                    fetch
-  GIT_DEPTH:                       100
-  CI_SERVER_NAME:                  "GitLab CI"
-  CI_IMAGE:                        "paritytech/ci-linux:production"
-  DOCKER_OS:                       "debian:stretch"
-  ARCH:                            "x86_64"
-  ZOMBIENET_IMAGE:                 "docker.io/paritytech/zombienet:v1.2.25"
-  PIPELINE_SCRIPTS_TAG:            "v0.4"
+  GIT_STRATEGY: fetch
+  GIT_DEPTH: 100
+  CI_SERVER_NAME: "GitLab CI"
+  CI_IMAGE: "paritytech/ci-linux:production"
+  DOCKER_OS: "debian:stretch"
+  ARCH: "x86_64"
+  ZOMBIENET_IMAGE: "docker.io/paritytech/zombienet:v1.2.25"
+  PIPELINE_SCRIPTS_TAG: "v0.4"
 
 default:
-  cache:                           {}
+  cache: {}
 
-.collect-artifacts:                &collect-artifacts
+.collect-artifacts: &collect-artifacts
   artifacts:
-    name:                          "${CI_JOB_NAME}_${CI_COMMIT_REF_NAME}"
-    when:                          on_success
-    expire_in:                     7 days
+    name: "${CI_JOB_NAME}_${CI_COMMIT_REF_NAME}"
+    when: on_success
+    expire_in: 7 days
     paths:
       - ./artifacts/
 
-.kubernetes-env:                   &kubernetes-env
+.kubernetes-env: &kubernetes-env
   retry:
     max: 2
     when:
       - runner_system_failure
       - unknown_failure
       - api_failure
-  interruptible:                   true
+  interruptible: true
   tags:
     - kubernetes-parity-build
 
-.docker-env:                       &docker-env
-  image:                           "${CI_IMAGE}"
+.docker-env: &docker-env
+  image: "${CI_IMAGE}"
   retry:
     max: 2
     when:
       - runner_system_failure
       - unknown_failure
       - api_failure
-  interruptible:                   true
+  interruptible: true
   tags:
     - linux-docker
 
-.compiler-info:                    &compiler-info
+.compiler-info: &compiler-info
   before_script:
     - rustup show
     - cargo --version
     - sccache -s
 
-.test-refs:                        &test-refs
+.test-refs: &test-refs
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_REF_NAME == "master"
-    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/                         # PRs
+    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/ # PRs
 
-.common-refs:                      &common-refs
-  # these jobs run always*
+.common-refs: &common-refs # these jobs run always*
   rules:
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_REF_NAME == "master"
-    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/                         # PRs
-    - if: $CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+.*$/              # i.e. v1.0, v2.1rc1
+    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/ # PRs
+    - if: $CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+.*$/ # i.e. v1.0, v2.1rc1
 
-.test-pr-refs:                     &test-pr-refs
+.test-pr-refs: &test-pr-refs
   rules:
     - if: $CI_PIPELINE_SOURCE == "pipeline"
       when: never
-    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/                         # PRs
+    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/ # PRs
 
-.zombienet-refs:                   &zombienet-refs
+.zombienet-refs: &zombienet-refs
   rules:
     - if: $CI_PIPELINE_SOURCE == "pipeline"
       when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - if: $CI_COMMIT_REF_NAME == "master"
-    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/                         # PRs
+    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/ # PRs
 
-.deploy-testnet-refs:              &deploy-testnet-refs
+.deploy-testnet-refs: &deploy-testnet-refs
   rules:
     - if: $CI_PIPELINE_SOURCE == "pipeline"
       when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_REF_NAME == "master"
 
-.publish-refs:                     &publish-refs
+.publish-refs: &publish-refs
   rules:
     - if: $CI_PIPELINE_SOURCE == "pipeline"
       when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "web" &&
-          $CI_COMMIT_REF_NAME == "master"
+        $CI_COMMIT_REF_NAME == "master"
     - if: $CI_COMMIT_REF_NAME == "master"
-    - if: $CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+.*$/              # i.e. v1.0, v2.1rc1
+    - if: $CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+.*$/ # i.e. v1.0, v2.1rc1
 
-.build-push-image:                 &build-push-image
-  <<:                              *kubernetes-env
-  image:                           quay.io/buildah/stable
-  variables:                       &image-variables
-    GIT_STRATEGY:                  none
-    DOCKER_USER:                   ${PARITYPR_USER}
-    DOCKER_PASS:                   ${PARITYPR_PASS}
-  before_script:                   &check-versions
+.build-push-image: &build-push-image
+  <<: *kubernetes-env
+  image: quay.io/buildah/stable
+  variables: &image-variables
+    GIT_STRATEGY: none
+    DOCKER_USER: ${PARITYPR_USER}
+    DOCKER_PASS: ${PARITYPR_PASS}
+  before_script: &check-versions
     - test -s ./artifacts/VERSION || exit 1
     - test -s ./artifacts/EXTRATAG || exit 1
     - VERSION="$(cat ./artifacts/VERSION)"
@@ -138,19 +137,19 @@ default:
     - echo "Polkadot version = ${VERSION} (EXTRATAG = ${EXTRATAG})"
   script:
     - test "$DOCKER_USER" -a "$DOCKER_PASS" ||
-        ( echo "no docker credentials provided"; exit 1 )
+      ( echo "no docker credentials provided"; exit 1 )
     - cd ./artifacts
     - buildah bud
-        --format=docker
-        --build-arg VCS_REF="${CI_COMMIT_SHA}"
-        --build-arg BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-        --build-arg IMAGE_NAME="${IMAGE_NAME}"
-        --tag "$IMAGE_NAME:$VERSION"
-        --tag "$IMAGE_NAME:$EXTRATAG"
-        --file ${DOCKERFILE} .
+      --format=docker
+      --build-arg VCS_REF="${CI_COMMIT_SHA}"
+      --build-arg BUILD_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+      --build-arg IMAGE_NAME="${IMAGE_NAME}"
+      --tag "$IMAGE_NAME:$VERSION"
+      --tag "$IMAGE_NAME:$EXTRATAG"
+      --file ${DOCKERFILE} .
     # The job will success only on the protected branch
     - echo "$DOCKER_PASS" |
-        buildah login --username "$DOCKER_USER" --password-stdin docker.io
+      buildah login --username "$DOCKER_USER" --password-stdin docker.io
     - buildah info
     - buildah push --format=v2s2 "$IMAGE_NAME:$VERSION"
     - buildah push --format=v2s2 "$IMAGE_NAME:$EXTRATAG"
@@ -160,32 +159,32 @@ default:
 #### stage:                        stage1
 
 check-runtime:
-  stage:                           stage1
-  image:                           paritytech/tools:latest
-  <<:                              *kubernetes-env
-  <<:                              *test-refs
+  stage: stage1
+  image: paritytech/tools:latest
+  <<: *kubernetes-env
+  <<: *test-refs
   variables:
-    GITLAB_API:                    "https://gitlab.parity.io/api/v4"
-    GITHUB_API_PROJECT:            "parity%2Finfrastructure%2Fgithub-api"
+    GITLAB_API: "https://gitlab.parity.io/api/v4"
+    GITHUB_API_PROJECT: "parity%2Finfrastructure%2Fgithub-api"
   script:
     - ./scripts/ci/gitlab/check_runtime.sh
-  allow_failure:                   true
+  allow_failure: true
 
 cargo-fmt:
-  stage:                           stage1
-  <<:                              *docker-env
-  <<:                              *test-refs
+  stage: stage1
+  <<: *docker-env
+  <<: *test-refs
   script:
     - cargo +nightly --version
     - cargo +nightly fmt --all -- --check
-  allow_failure:                   true
+  allow_failure: true
 
 build-linux-stable:
-  stage:                           stage1
-  <<:                              *docker-env
-  <<:                              *compiler-info
-  <<:                              *collect-artifacts
-  <<:                              *common-refs
+  stage: stage1
+  <<: *docker-env
+  <<: *compiler-info
+  <<: *collect-artifacts
+  <<: *common-refs
   variables:
     RUST_TOOLCHAIN: stable
     # Enable debug assertions since we are running optimized builds for testing
@@ -211,10 +210,10 @@ build-linux-stable:
     - cp -r scripts/* ./artifacts
 
 test-linux-stable:
-  stage:                           stage1
-  <<:                              *docker-env
-  <<:                              *compiler-info
-  <<:                              *common-refs
+  stage: stage1
+  <<: *docker-env
+  <<: *compiler-info
+  <<: *common-refs
   variables:
     RUST_TOOLCHAIN: stable
     # Enable debug assertions since we are running optimized builds for testing
@@ -223,12 +222,10 @@ test-linux-stable:
   script:
     - time cargo test --workspace --profile testnet --verbose --locked --features=runtime-benchmarks,runtime-metrics
 
-
-
 spellcheck:
-  stage:                           stage1
-  <<:                              *docker-env
-  <<:                              *test-refs
+  stage: stage1
+  <<: *docker-env
+  <<: *test-refs
   script:
     - cargo spellcheck --version
     # compare with the commit parent to the PR, given it's from a default branch
@@ -236,15 +233,15 @@ spellcheck:
     - echo "___Spellcheck is going to check your diff___"
     - cargo spellcheck list-files -vvv $(git diff --diff-filter=AM --name-only $(git merge-base ${CI_COMMIT_SHA} ${CI_DEFAULT_BRANCH} -- :^bridges))
     - time cargo spellcheck check -vvv --cfg=scripts/ci/gitlab/spellcheck.toml --checkers hunspell --code 1
-        $(git diff --diff-filter=AM --name-only $(git merge-base ${CI_COMMIT_SHA} ${CI_DEFAULT_BRANCH} -- :^bridges))
-  allow_failure:                   true
+      $(git diff --diff-filter=AM --name-only $(git merge-base ${CI_COMMIT_SHA} ${CI_DEFAULT_BRANCH} -- :^bridges))
+  allow_failure: true
 
 build-test-collators:
-  stage:                           stage1
-  <<:                              *collect-artifacts
-  <<:                              *docker-env
-  <<:                              *compiler-info
-  <<:                              *test-refs
+  stage: stage1
+  <<: *collect-artifacts
+  <<: *docker-env
+  <<: *compiler-info
+  <<: *test-refs
   script:
     - time cargo build --profile testnet --verbose -p test-parachain-adder-collator
     - time cargo build --profile testnet --verbose -p test-parachain-undying-collator
@@ -260,11 +257,11 @@ build-test-collators:
     - cp -r ./scripts/* ./artifacts
 
 build-malus:
-  stage:                           stage1
-  <<:                              *collect-artifacts
-  <<:                              *docker-env
-  <<:                              *compiler-info
-  <<:                              *test-refs
+  stage: stage1
+  <<: *collect-artifacts
+  <<: *docker-env
+  <<: *compiler-info
+  <<: *test-refs
   script:
     - time cargo build --profile testnet --verbose -p polkadot-test-malus
     - sccache -s
@@ -277,11 +274,11 @@ build-malus:
     - cp -r ./scripts/* ./artifacts
 
 build-staking-miner:
-  stage:                           stage1
-  <<:                              *collect-artifacts
-  <<:                              *docker-env
-  <<:                              *compiler-info
-  <<:                              *common-refs
+  stage: stage1
+  <<: *collect-artifacts
+  <<: *docker-env
+  <<: *compiler-info
+  <<: *common-refs
   script:
     - time cargo build --locked --release --package staking-miner
     # pack artifacts
@@ -294,25 +291,25 @@ build-staking-miner:
 
 #### stage:                        stage2
 
-.check-dependent-project:          &check-dependent-project
-  stage:                           stage2
+.check-dependent-project: &check-dependent-project
+  stage: stage2
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         check-runtime
-      artifacts:                   false
-  <<:                              *docker-env
-  <<:                              *test-pr-refs
+    - job: check-runtime
+      artifacts: false
+  <<: *docker-env
+  <<: *test-pr-refs
   script:
     - git clone
-        --depth=1
-        "--branch=$PIPELINE_SCRIPTS_TAG"
-        https://github.com/paritytech/pipeline-scripts
+      --depth=1
+      "--branch=$PIPELINE_SCRIPTS_TAG"
+      https://github.com/paritytech/pipeline-scripts
     - ./pipeline-scripts/check_dependent_project.sh
-        --org paritytech
-        --dependent-repo "$DEPENDENT_REPO"
-        --github-api-token "$GITHUB_PR_TOKEN"
-        --extra-dependencies "$EXTRA_DEPENDENCIES"
-        --companion-overrides "$COMPANION_OVERRIDES"
+      --org paritytech
+      --dependent-repo "$DEPENDENT_REPO"
+      --github-api-token "$GITHUB_PR_TOKEN"
+      --extra-dependencies "$EXTRA_DEPENDENCIES"
+      --companion-overrides "$COMPANION_OVERRIDES"
 
 check-dependent-cumulus:
   <<: *check-dependent-project
@@ -324,14 +321,14 @@ check-dependent-cumulus:
       cumulus: polkadot-v*
 
 test-node-metrics:
-  stage:                           stage2
+  stage: stage2
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         check-runtime
-      artifacts:                   false
-  <<:                              *docker-env
-  <<:                              *compiler-info
-  <<:                              *test-refs
+    - job: check-runtime
+      artifacts: false
+  <<: *docker-env
+  <<: *compiler-info
+  <<: *test-refs
   variables:
     RUST_TOOLCHAIN: stable
     # Enable debug assertions since we are running optimized builds for testing
@@ -341,25 +338,25 @@ test-node-metrics:
     - time cargo test  --profile testnet --verbose --locked --features=runtime-metrics -p polkadot-node-metrics
 
 test-deterministic-wasm:
-  stage:                           stage2
+  stage: stage2
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         cargo-fmt
-      artifacts:                   false
-  <<:                              *test-refs
-  <<:                              *docker-env
-  <<:                              *compiler-info
+    - job: cargo-fmt
+      artifacts: false
+  <<: *test-refs
+  <<: *docker-env
+  <<: *compiler-info
   script:
     - ./scripts/ci/gitlab/test_deterministic_wasm.sh
 
 check-transaction-versions:
-  stage:                           stage2
-  <<:                              *test-refs
-  <<:                              *docker-env
-  image:                           node:15
+  stage: stage2
+  <<: *test-refs
+  <<: *docker-env
+  image: node:15
   needs:
-    - job:                         build-linux-stable
-      artifacts:                   true
+    - job: build-linux-stable
+      artifacts: true
   before_script:
     - apt-get -y update; apt-get -y install jq lsof
     - npm install --ignore-scripts -g @polkadot/metadata-cmp
@@ -369,14 +366,12 @@ check-transaction-versions:
   script:
     - ./scripts/ci/gitlab/check_extrinsics_ordering.sh
 
-
-
 # This image is used in testnets
 # Release image is handled by the Github Action here:
 # .github/workflows/publish-docker-release.yml
 publish-polkadot-debug-image:
-  stage:                           stage2
-  <<:                              *build-push-image
+  stage: stage2
+  <<: *build-push-image
   rules:
     # Don't run when triggered from another pipeline
     - if: $CI_PIPELINE_SOURCE == "pipeline"
@@ -384,16 +379,16 @@ publish-polkadot-debug-image:
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_COMMIT_REF_NAME == "master"
-    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/                         # PRs
-    - if: $CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+.*$/              # i.e. v1.0, v2.1rc1
+    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/ # PRs
+    - if: $CI_COMMIT_REF_NAME =~ /^v[0-9]+\.[0-9]+.*$/ # i.e. v1.0, v2.1rc1
   variables:
-    <<:                            *image-variables
+    <<: *image-variables
     # scripts/ci/dockerfiles/polkadot_injected_debug.Dockerfile
-    DOCKERFILE:                    ci/dockerfiles/polkadot_injected_debug.Dockerfile
-    IMAGE_NAME:                    docker.io/paritypr/polkadot-debug
+    DOCKERFILE: ci/dockerfiles/polkadot_injected_debug.Dockerfile
+    IMAGE_NAME: docker.io/paritypr/polkadot-debug
   needs:
-    - job:                         build-linux-stable
-      artifacts:                   true
+    - job: build-linux-stable
+      artifacts: true
   after_script:
     # pass artifacts to the zombienet-tests job
     # https://docs.gitlab.com/ee/ci/multi_project_pipelines.html#with-variable-inheritance
@@ -403,21 +398,21 @@ publish-polkadot-debug-image:
     reports:
       # this artifact is used in zombienet-tests job
       dotenv: ./artifacts/parachains.env
-    expire_in:                     1 days
+    expire_in: 1 days
 
 publish-test-collators-image:
   # service image for Simnet
-  stage:                           stage2
-  <<:                              *build-push-image
-  <<:                              *zombienet-refs
+  stage: stage2
+  <<: *build-push-image
+  <<: *zombienet-refs
   variables:
-    <<:                            *image-variables
+    <<: *image-variables
     # scripts/ci/dockerfiles/collator_injected.Dockerfile
-    DOCKERFILE:                    ci/dockerfiles/collator_injected.Dockerfile
-    IMAGE_NAME:                    docker.io/paritypr/colander
+    DOCKERFILE: ci/dockerfiles/collator_injected.Dockerfile
+    IMAGE_NAME: docker.io/paritypr/colander
   needs:
-    - job:                         build-test-collators
-      artifacts:                   true
+    - job: build-test-collators
+      artifacts: true
   after_script:
     - buildah logout --all
     # pass artifacts to the zombienet-tests job
@@ -430,17 +425,17 @@ publish-test-collators-image:
 
 publish-malus-image:
   # service image for Simnet
-  stage:                           stage2
-  <<:                              *build-push-image
-  <<:                              *zombienet-refs
+  stage: stage2
+  <<: *build-push-image
+  <<: *zombienet-refs
   variables:
-    <<:                            *image-variables
+    <<: *image-variables
     # scripts/ci/dockerfiles/malus_injected.Dockerfile
-    DOCKERFILE:                    ci/dockerfiles/malus_injected.Dockerfile
-    IMAGE_NAME:                    docker.io/paritypr/malus
+    DOCKERFILE: ci/dockerfiles/malus_injected.Dockerfile
+    IMAGE_NAME: docker.io/paritypr/malus
   needs:
-    - job:                         build-malus
-      artifacts:                   true
+    - job: build-malus
+      artifacts: true
   after_script:
     - buildah logout "$IMAGE_NAME"
     # pass artifacts to the zombienet-tests job
@@ -452,32 +447,31 @@ publish-malus-image:
       dotenv: ./artifacts/malus.env
 
 publish-staking-miner-image:
-  stage:                           stage2
-  <<:                              *build-push-image
-  <<:                              *publish-refs
+  stage: stage2
+  <<: *build-push-image
+  <<: *publish-refs
   variables:
-    <<:                            *image-variables
+    <<: *image-variables
     # scripts/ci/dockerfiles/staking-miner/staking-miner_injected.Dockerfile
-    DOCKERFILE:                    ci/dockerfiles/staking-miner/staking-miner_injected.Dockerfile
-    IMAGE_NAME:                    docker.io/paritytech/staking-miner
-    GIT_STRATEGY:                  none
-    DOCKER_USER:                   ${Docker_Hub_User_Parity}
-    DOCKER_PASS:                   ${Docker_Hub_Pass_Parity}
+    DOCKERFILE: ci/dockerfiles/staking-miner/staking-miner_injected.Dockerfile
+    IMAGE_NAME: docker.io/paritytech/staking-miner
+    GIT_STRATEGY: none
+    DOCKER_USER: ${Docker_Hub_User_Parity}
+    DOCKER_PASS: ${Docker_Hub_Pass_Parity}
   needs:
-    - job:                         build-staking-miner
-      artifacts:                   true
+    - job: build-staking-miner
+      artifacts: true
 
-
-publish-s3-release:                &publish-s3
-  stage:                           stage3
+publish-s3-release: &publish-s3
+  stage: stage3
   needs:
-    - job:                         build-linux-stable
-      artifacts:                   true
-  <<:                              *kubernetes-env
-  image:                           paritytech/awscli:latest
+    - job: build-linux-stable
+      artifacts: true
+  <<: *kubernetes-env
+  image: paritytech/awscli:latest
   variables:
-    GIT_STRATEGY:                  none
-    PREFIX:                        "builds/polkadot/${ARCH}-${DOCKER_OS}"
+    GIT_STRATEGY: none
+    PREFIX: "builds/polkadot/${ARCH}-${DOCKER_OS}"
   rules:
     - if: $CI_PIPELINE_SOURCE == "pipeline"
       when: never
@@ -490,10 +484,10 @@ publish-s3-release:                &publish-s3
     - aws s3 sync --acl public-read ./artifacts/ s3://${AWS_BUCKET}/${PREFIX}/${VERSION}/
     - echo "update objects at https://releases.parity.io/${PREFIX}/${EXTRATAG}"
     - find ./artifacts -type f | while read file; do
-        name="${file#./artifacts/}";
-        aws s3api copy-object
-          --copy-source ${AWS_BUCKET}/${PREFIX}/${VERSION}/${name}
-          --bucket ${AWS_BUCKET} --key ${PREFIX}/${EXTRATAG}/${name};
+      name="${file#./artifacts/}";
+      aws s3api copy-object
+      --copy-source ${AWS_BUCKET}/${PREFIX}/${VERSION}/${name}
+      --bucket ${AWS_BUCKET} --key ${PREFIX}/${EXTRATAG}/${name};
       done
     - |
       cat <<-EOM
@@ -506,13 +500,13 @@ publish-s3-release:                &publish-s3
       EOM
   after_script:
     - aws s3 ls s3://${AWS_BUCKET}/${PREFIX}/${EXTRATAG}/
-        --recursive --human-readable --summarize
+      --recursive --human-readable --summarize
 
-update_polkadot_weights:           &update-weights
-  stage:                           stage2
-  when:                            manual
+update_polkadot_weights: &update-weights
+  stage: stage2
+  when: manual
   variables:
-    RUNTIME:                       polkadot
+    RUNTIME: polkadot
   artifacts:
     paths:
       - ${RUNTIME}_weights_${CI_COMMIT_SHORT_SHA}.patch
@@ -524,38 +518,38 @@ update_polkadot_weights:           &update-weights
     - weights
 
 update_kusama_weights:
-  <<:                              *update-weights
+  <<: *update-weights
   variables:
-    RUNTIME:                       kusama
+    RUNTIME: kusama
 
 update_westend_weights:
-  <<:                              *update-weights
+  <<: *update-weights
   variables:
-    RUNTIME:                       westend
+    RUNTIME: westend
 
 update_rococo_weights:
-  <<:                              *update-weights
+  <<: *update-weights
   variables:
-    RUNTIME:                       rococo
+    RUNTIME: rococo
 
 #### stage:                        stage3
 
 build-rustdoc:
-  stage:                           stage3
+  stage: stage3
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         test-deterministic-wasm
-      artifacts:                   false
-  <<:                              *docker-env
-  <<:                              *test-refs
+    - job: test-deterministic-wasm
+      artifacts: false
+  <<: *docker-env
+  <<: *test-refs
   variables:
-    SKIP_WASM_BUILD:               1
+    SKIP_WASM_BUILD: 1
   artifacts:
-    name:                          "${CI_JOB_NAME}_${CI_COMMIT_REF_NAME}-doc"
-    when:                          on_success
-    expire_in:                     1 days
+    name: "${CI_JOB_NAME}_${CI_COMMIT_REF_NAME}-doc"
+    when: on_success
+    expire_in: 1 days
     paths:
-    - ./crate-docs/
+      - ./crate-docs/
   script:
     # FIXME: it fails with `RUSTDOCFLAGS="-Dwarnings"` and `--all-features`
     # FIXME: return to stable when https://github.com/rust-lang/rust/issues/96937 gets into stable
@@ -568,13 +562,13 @@ build-rustdoc:
     - sccache -s
 
 generate-impl-guide:
-  stage:                           stage3
+  stage: stage3
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         check-transaction-versions
-      artifacts:                   false
-  <<:                              *test-refs
-  <<:                              *docker-env
+    - job: check-transaction-versions
+      artifacts: false
+  <<: *test-refs
+  <<: *docker-env
   image:
     name: michaelfbryan/mdbook-docker-image:v0.4.4
     entrypoint: [""]
@@ -582,28 +576,28 @@ generate-impl-guide:
     - mdbook build ./roadmap/implementers-guide
 
 check-try-runtime:
-  stage:                           stage3
+  stage: stage3
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         test-node-metrics
-      artifacts:                   false
-  <<:                              *test-refs
-  <<:                              *docker-env
-  <<:                              *compiler-info
+    - job: test-node-metrics
+      artifacts: false
+  <<: *test-refs
+  <<: *docker-env
+  <<: *compiler-info
   script:
     # Check that everything compiles with `try-runtime` feature flag.
     - cargo check --features try-runtime --all
     - sccache -s
 
 check-no-default-features:
-  stage:                           stage3
+  stage: stage3
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         test-deterministic-wasm
-      artifacts:                   false
-  <<:                              *test-refs
-  <<:                              *docker-env
-  <<:                              *compiler-info
+    - job: test-deterministic-wasm
+      artifacts: false
+  <<: *test-refs
+  <<: *docker-env
+  <<: *compiler-info
   script:
     # Check that polkadot-cli will compile no default features.
     - pushd ./node/service && cargo check --no-default-features && popd
@@ -611,43 +605,43 @@ check-no-default-features:
     - sccache -s
 
 build-short-benchmark:
-  stage:                           stage3
-  <<:                              *test-refs
-  <<:                              *docker-env
-  <<:                              *collect-artifacts
+  stage: stage3
+  <<: *test-refs
+  <<: *docker-env
+  <<: *collect-artifacts
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         test-node-metrics
-      artifacts:                   false
+    - job: test-node-metrics
+      artifacts: false
   script:
     - cargo +nightly build --profile release --locked --features=runtime-benchmarks
     - mkdir artifacts
     - cp ./target/release/polkadot ./artifacts/
 
 deploy-parity-testnet:
-  stage:                           stage3
+  stage: stage3
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         test-deterministic-wasm
-      artifacts:                   false
-  <<:                              *deploy-testnet-refs
+    - job: test-deterministic-wasm
+      artifacts: false
+  <<: *deploy-testnet-refs
   variables:
-    POLKADOT_CI_COMMIT_NAME:       "${CI_COMMIT_REF_NAME}"
-    POLKADOT_CI_COMMIT_REF:        "${CI_COMMIT_SHORT_SHA}"
-  allow_failure:                   false
-  trigger:                         "parity/infrastructure/parity-testnet"
+    POLKADOT_CI_COMMIT_NAME: "${CI_COMMIT_REF_NAME}"
+    POLKADOT_CI_COMMIT_REF: "${CI_COMMIT_SHORT_SHA}"
+  allow_failure: false
+  trigger: "parity/infrastructure/parity-testnet"
 
 zombienet-tests-parachains-smoke-test:
-  stage:                           stage3
-  image:                           "${ZOMBIENET_IMAGE}"
-  <<:                              *kubernetes-env
-  <<:                              *zombienet-refs
+  stage: stage3
+  image: "${ZOMBIENET_IMAGE}"
+  <<: *kubernetes-env
+  <<: *zombienet-refs
   needs:
-    - job:                         publish-polkadot-debug-image
-    - job:                         publish-malus-image
-    - job:                         publish-test-collators-image
+    - job: publish-polkadot-debug-image
+    - job: publish-malus-image
+    - job: publish-test-collators-image
   variables:
-    GH_DIR:                        "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/smoke"
+    GH_DIR: "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/smoke"
   before_script:
     - echo "Zombie-net Tests Config"
     - echo "${ZOMBIENET_IMAGE}"
@@ -660,23 +654,23 @@ zombienet-tests-parachains-smoke-test:
     - export COL_IMAGE="docker.io/paritypr/colander:4519" # The collator image is fixed
   script:
     - /home/nonroot/zombie-net/scripts/ci/run-test-env-manager.sh
-        --github-remote-dir="${GH_DIR}"
-        --test="0001-parachains-smoke-test.feature"
-  allow_failure:                   false
+      --github-remote-dir="${GH_DIR}"
+      --test="0001-parachains-smoke-test.feature"
+  allow_failure: false
   retry: 2
   tags:
     - zombienet-polkadot-integration-test
 
 zombienet-tests-parachains-pvf:
-  stage:                           stage3
-  image:                           "${ZOMBIENET_IMAGE}"
-  <<:                              *kubernetes-env
-  <<:                              *zombienet-refs
+  stage: stage3
+  image: "${ZOMBIENET_IMAGE}"
+  <<: *kubernetes-env
+  <<: *zombienet-refs
   needs:
-    - job:                         publish-polkadot-debug-image
-    - job:                         publish-test-collators-image
+    - job: publish-polkadot-debug-image
+    - job: publish-test-collators-image
   variables:
-    GH_DIR:                        "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/functional"
+    GH_DIR: "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/functional"
   before_script:
     - echo "Zombie-net Tests Config"
     - echo "${ZOMBIENET_IMAGE}"
@@ -689,24 +683,24 @@ zombienet-tests-parachains-pvf:
     - export COL_IMAGE=${COLLATOR_IMAGE_NAME}:${COLLATOR_IMAGE_TAG}
   script:
     - /home/nonroot/zombie-net/scripts/ci/run-test-env-manager.sh
-        --github-remote-dir="${GH_DIR}"
-        --test="0001-parachains-pvf.feature"
-  allow_failure:                   false
+      --github-remote-dir="${GH_DIR}"
+      --test="0001-parachains-pvf.feature"
+  allow_failure: false
   retry: 2
   tags:
     - zombienet-polkadot-integration-test
 
 zombienet-tests-parachains-disputes:
-  stage:                           stage3
-  image:                           "${ZOMBIENET_IMAGE}"
-  <<:                              *kubernetes-env
-  <<:                              *zombienet-refs
+  stage: stage3
+  image: "${ZOMBIENET_IMAGE}"
+  <<: *kubernetes-env
+  <<: *zombienet-refs
   needs:
-    - job:                         publish-polkadot-debug-image
-    - job:                         publish-test-collators-image
-    - job:                         publish-malus-image
+    - job: publish-polkadot-debug-image
+    - job: publish-test-collators-image
+    - job: publish-malus-image
   variables:
-    GH_DIR:                        "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/functional"
+    GH_DIR: "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/functional"
   before_script:
     - echo "Zombie-net Tests Config"
     - echo "${ZOMBIENET_IMAGE_NAME}"
@@ -719,24 +713,24 @@ zombienet-tests-parachains-disputes:
     - export COL_IMAGE=${COLLATOR_IMAGE_NAME}:${COLLATOR_IMAGE_TAG}
   script:
     - /home/nonroot/zombie-net/scripts/ci/run-test-env-manager.sh
-        --github-remote-dir="${GH_DIR}"
-        --test="0002-parachains-disputes.feature"
-  allow_failure:                   false
+      --github-remote-dir="${GH_DIR}"
+      --test="0002-parachains-disputes.feature"
+  allow_failure: false
   retry: 2
   tags:
     - zombienet-polkadot-integration-test
 
 zombienet-test-parachains-upgrade-smoke-test:
-  stage:                           stage3
-  <<:                              *kubernetes-env
-  <<:                              *zombienet-refs
-  image:                           "docker.io/paritytech/zombienet:v1.2.45"
+  stage: stage3
+  <<: *kubernetes-env
+  <<: *zombienet-refs
+  image: "docker.io/paritytech/zombienet:v1.2.45"
   needs:
-    - job:                         publish-polkadot-debug-image
-    - job:                         publish-malus-image
-    - job:                         publish-test-collators-image
+    - job: publish-polkadot-debug-image
+    - job: publish-malus-image
+    - job: publish-test-collators-image
   variables:
-    GH_DIR:                        'https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/smoke'
+    GH_DIR: "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/smoke"
   before_script:
     - echo "ZombieNet Tests Config"
     - echo "${PARACHAINS_IMAGE_NAME}:${PARACHAINS_IMAGE_TAG}"
@@ -748,24 +742,24 @@ zombienet-test-parachains-upgrade-smoke-test:
     - export COL_IMAGE="docker.io/parity/polkadot-collator:latest" # Use cumulus lastest image
   script:
     - /home/nonroot/zombie-net/scripts/ci/run-test-env-manager.sh
-        --github-remote-dir="${GH_DIR}"
-        --test="0002-parachains-upgrade-smoke-test.feature"
-  allow_failure:                   true
+      --github-remote-dir="${GH_DIR}"
+      --test="0002-parachains-upgrade-smoke-test.feature"
+  allow_failure: true
   retry: 2
   tags:
     - zombienet-polkadot-integration-test
 
 zombienet-tests-malus-dispute-valid:
-  stage:                           stage3
-  image:                           "${ZOMBIENET_IMAGE}"
-  <<:                              *kubernetes-env
-  <<:                              *zombienet-refs
+  stage: stage3
+  image: "${ZOMBIENET_IMAGE}"
+  <<: *kubernetes-env
+  <<: *zombienet-refs
   needs:
-    - job:                         publish-polkadot-debug-image
-    - job:                         publish-malus-image
-    - job:                         publish-test-collators-image
+    - job: publish-polkadot-debug-image
+    - job: publish-malus-image
+    - job: publish-test-collators-image
   variables:
-    GH_DIR:                        "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/node/malus/integrationtests"
+    GH_DIR: "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/node/malus/integrationtests"
   before_script:
     - echo "Zombie-net Tests Config"
     - echo "${ZOMBIENET_IMAGE_NAME}"
@@ -778,23 +772,23 @@ zombienet-tests-malus-dispute-valid:
     - export COL_IMAGE=${COLLATOR_IMAGE_NAME}:${COLLATOR_IMAGE_TAG}
   script:
     - /home/nonroot/zombie-net/scripts/ci/run-test-env-manager.sh
-        --github-remote-dir="${GH_DIR}"
-        --test="0001-dispute-valid-block.feature"
-  allow_failure:                   false
+      --github-remote-dir="${GH_DIR}"
+      --test="0001-dispute-valid-block.feature"
+  allow_failure: false
   retry: 2
   tags:
     - zombienet-polkadot-integration-test
 
 zombienet-tests-deregister-register-validator:
-  stage:                           stage3
-  image:                           "docker.io/paritytech/zombienet:v1.2.47"
-  <<:                              *kubernetes-env
-  <<:                              *zombienet-refs
+  stage: stage3
+  image: "docker.io/paritytech/zombienet:v1.2.47"
+  <<: *kubernetes-env
+  <<: *zombienet-refs
   needs:
-    - job:                         publish-polkadot-debug-image
-      artifacts:                   true
+    - job: publish-polkadot-debug-image
+      artifacts: true
   variables:
-    GH_DIR:                        "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/smoke"
+    GH_DIR: "https://github.com/paritytech/polkadot/tree/${CI_COMMIT_SHORT_SHA}/zombienet_tests/smoke"
   before_script:
     - echo "Zombie-net Tests Config"
     - echo "${ZOMBIENET_IMAGE_NAME}"
@@ -805,9 +799,9 @@ zombienet-tests-deregister-register-validator:
     - export MALUS_IMAGE=${MALUS_IMAGE_NAME}:${MALUS_IMAGE_TAG}
   script:
     - /home/nonroot/zombie-net/scripts/ci/run-test-env-manager.sh
-        --github-remote-dir="${GH_DIR}"
-        --test="0003-deregister-register-validator-smoke.feature"
-  allow_failure:                   false
+      --github-remote-dir="${GH_DIR}"
+      --test="0003-deregister-register-validator-smoke.feature"
+  allow_failure: false
   retry: 2
   tags:
     - zombienet-polkadot-integration-test
@@ -815,11 +809,11 @@ zombienet-tests-deregister-register-validator:
 #### stage:                        stage4
 
 publish-rustdoc:
-  stage:                           stage4
-  <<:                              *kubernetes-env
-  image:                           paritytech/tools:latest
+  stage: stage4
+  <<: *kubernetes-env
+  image: paritytech/tools:latest
   variables:
-    GIT_DEPTH:                     100
+    GIT_DEPTH: 100
   rules:
     - if: $CI_PIPELINE_SOURCE == "pipeline"
       when: never
@@ -828,8 +822,8 @@ publish-rustdoc:
   # `needs:` can be removed after CI image gets nonroot. In this case `needs:` stops other
   # artifacts from being dowloaded by this job.
   needs:
-    - job:                         build-rustdoc
-      artifacts:                   true
+    - job: build-rustdoc
+      artifacts: true
   script:
     # setup ssh
     - eval $(ssh-agent)
@@ -856,35 +850,35 @@ publish-rustdoc:
     # We don't want to mark the entire job failed if there's nothing to
     # publish though, hence the `|| true`.
     - git commit -m "Updated docs for ${CI_COMMIT_REF_NAME}" ||
-        echo "___Nothing to commit___"
+      echo "___Nothing to commit___"
     - git push origin gh-pages --force
     - echo "___Rustdoc was successfully published to https://paritytech.github.io/polkadot/___"
   after_script:
     - rm -rf .git/ ./*
 
 # Run all pallet benchmarks only once to check if there are any errors
-short-benchmark-polkadot:          &short-bench
-  stage:                           stage4
-  <<:                              *test-pr-refs
-  <<:                              *docker-env
+short-benchmark-polkadot: &short-bench
+  stage: stage4
+  <<: *test-pr-refs
+  <<: *docker-env
   # this is an artificial job dependency, for pipeline optimization using GitLab's DAGs
   needs:
-    - job:                         build-short-benchmark
-      artifacts:                   true
+    - job: build-short-benchmark
+      artifacts: true
   variables:
-    RUNTIME:                       polkadot
+    RUNTIME: polkadot
   script:
     - ./artifacts/polkadot benchmark pallet --execution wasm --wasm-execution compiled --chain $RUNTIME-dev --pallet "*" --extrinsic "*" --steps 1 --repeat 1
 
 short-benchmark-kusama:
-  <<:                              *short-bench
+  <<: *short-bench
   variables:
-    RUNTIME:                       kusama
+    RUNTIME: kusama
 
 short-benchmark-westend:
-  <<:                              *short-bench
+  <<: *short-bench
   variables:
-    RUNTIME:                       westend
+    RUNTIME: westend
 
 #### stage:                        .post
 
@@ -892,18 +886,16 @@ short-benchmark-westend:
 # In a DAG, every jobs chain is executed independently of others. The `fail_fast` principle suggests
 # to fail the pipeline as soon as possible to shorten the feedback loop.
 cancel-pipeline:
-  stage:                           .post
+  stage: .post
   needs:
-    - job:                         test-linux-stable
-      artifacts:                   false
-    - job:                         check-try-runtime
-      artifacts:                   false
+    - job: test-linux-stable
+      artifacts: false
+    - job: check-try-runtime
+      artifacts: false
   rules:
-    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/                         # PRs
+    - if: $CI_COMMIT_REF_NAME =~ /^[0-9]+$/ # PRs
       when: on_failure
   variables:
-    PROJECT_ID:                    "${CI_PROJECT_ID}"
-    PIPELINE_ID:                   "${CI_PIPELINE_ID}"
-  trigger:                         "parity/infrastructure/ci_cd/pipeline-stopper"
-
-
+    PROJECT_ID: "${CI_PROJECT_ID}"
+    PIPELINE_ID: "${CI_PIPELINE_ID}"
+  trigger: "parity/infrastructure/ci_cd/pipeline-stopper"

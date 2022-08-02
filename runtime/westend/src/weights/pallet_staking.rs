@@ -208,7 +208,7 @@ impl<T: frame_system::Config> pallet_staking::WeightInfo for WeightInfo<T> {
 	fn set_invulnerables(v: u32, ) -> Weight {
 		(4_452_000 as Weight)
 			// Standard Error: 0
-			.saturating_add((10_000 as Weight).saturating_mul(v as Weight))
+			.saturating_add((12_000 as Weight).saturating_mul(v as Weight))
 			.saturating_add(T::DbWeight::get().writes(1 as Weight))
 	}
 	// Storage: Staking Bonded (r:1 w:1)
