@@ -1,6 +1,6 @@
 [package]
 name = "polkadot-node-core-av-store"
-version = "0.9.24"
+version = "0.9.26"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2021"
 
@@ -12,7 +12,7 @@ thiserror = "1.0.31"
 gum = { package = "tracing-gum", path = "../../gum" }
 bitvec = "1.0.0"
 
-parity-scale-codec = { version = "3.1.2", features = ["derive"] }
+parity-scale-codec = { version = "3.1.5", features = ["derive"] }
 erasure = { package = "polkadot-erasure-coding", path = "../../../erasure-coding" }
 polkadot-node-subsystem = {path = "../../subsystem" }
 polkadot-node-subsystem-util = { path = "../../subsystem-util" }
@@ -26,9 +26,9 @@ env_logger = "0.9.0"
 assert_matches = "1.4.0"
 kvdb-memorydb = "0.11.0"
 
-sp-core = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.24" }
+sp-core = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 polkadot-node-subsystem-util = { path = "../../subsystem-util" }
 polkadot-node-subsystem-test-helpers = { path = "../../subsystem-test-helpers" }
-sp-keyring = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.24" }
+sp-keyring = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.26" }
 parking_lot = "0.12.0"
 test-helpers = { package = "polkadot-primitives-test-helpers", path = "../../../primitives/test-helpers" }

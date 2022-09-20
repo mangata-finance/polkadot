@@ -25,7 +25,6 @@ use polkadot_node_primitives::{
 use polkadot_node_subsystem::{
 	messages::{
 		AllMessages, ApprovalVotingMessage, AssignmentCheckResult, AvailabilityRecoveryMessage,
-		ImportStatementsResult,
 	},
 	ActivatedLeaf, ActiveLeavesUpdate, LeafStatus,
 };
