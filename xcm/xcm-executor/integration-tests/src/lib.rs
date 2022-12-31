@@ -17,14 +17,13 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg(test)]
 
-use frame_support::weights::Weight;
 use polkadot_test_client::{
 	BlockBuilderExt, ClientBlockImportExt, DefaultTestClientBuilderExt, ExecutionStrategy,
 	InitPolkadotBlockBuilder, TestClientBuilder, TestClientBuilderExt,
 };
 use polkadot_test_runtime::pallet_test_notifier;
 use polkadot_test_service::construct_extrinsic;
-use sp_runtime::{generic::BlockId, traits::Block};
+use sp_runtime::traits::Block;
 use sp_state_machine::InspectState;
 use xcm::{latest::prelude::*, VersionedResponse, VersionedXcm};
 
@@ -45,9 +44,9 @@ fn basic_buy_fees_message_executes() {
 
 	let execute = construct_extrinsic(
 		&client,
-		polkadot_test_runtime::Call::Xcm(pallet_xcm::Call::execute {
+		polkadot_test_runtime::RuntimeCall::Xcm(pallet_xcm::Call::execute {
 			message: Box::new(VersionedXcm::from(msg)),
-			max_weight: Weight::from_ref_time(1_000_000_000),
+			max_weight: 1_000_000_000,
 		}),
 		sp_keyring::Sr25519Keyring::Alice,
 		0,
@@ -61,24 +60,21 @@ fn basic_buy_fees_message_executes() {
 	futures::executor::block_on(client.import(sp_consensus::BlockOrigin::Own, block))
 		.expect("imports the block");
 
-	client
-		.state_at(&BlockId::Hash(block_hash))
-		.expect("state should exist")
-		.inspect_state(|| {
-			assert!(polkadot_test_runtime::System::events().iter().any(|r| matches!(
-				r.event,
-				polkadot_test_runtime::Event::Xcm(pallet_xcm::Event::Attempted(Outcome::Complete(
-					_
-				))),
-			)));
-		});
+	client.state_at(&block_hash).expect("state should exist").inspect_state(|| {
+		assert!(polkadot_test_runtime::System::events().iter().any(|r| matches!(
+			r.event,
+			polkadot_test_runtime::RuntimeEvent::Xcm(pallet_xcm::Event::Attempted(
+				Outcome::Complete(_)
+			)),
+		)));
+	});
 }
 
 #[test]
 fn query_response_fires() {
 	use pallet_test_notifier::Event::*;
 	use pallet_xcm::QueryStatus;
-	use polkadot_test_runtime::Event::TestNotifier;
+	use polkadot_test_runtime::RuntimeEvent::TestNotifier;
 
 	sp_tracing::try_init_simple();
 	let mut client = TestClientBuilder::new()
@@ -89,7 +85,9 @@ fn query_response_fires() {
 
 	let execute = construct_extrinsic(
 		&client,
-		polkadot_test_runtime::Call::TestNotifier(pallet_test_notifier::Call::prepare_new_query {}),
+		polkadot_test_runtime::RuntimeCall::TestNotifier(
+			pallet_test_notifier::Call::prepare_new_query {},
+		),
 		sp_keyring::Sr25519Keyring::Alice,
 		0,
 	);
@@ -103,17 +101,14 @@ fn query_response_fires() {
 		.expect("imports the block");
 
 	let mut query_id = None;
-	client
-		.state_at(&BlockId::Hash(block_hash))
-		.expect("state should exist")
-		.inspect_state(|| {
-			for r in polkadot_test_runtime::System::events().iter() {
-				match r.event {
-					TestNotifier(QueryPrepared(q)) => query_id = Some(q),
-					_ => (),
-				}
+	client.state_at(&block_hash).expect("state should exist").inspect_state(|| {
+		for r in polkadot_test_runtime::System::events().iter() {
+			match r.event {
+				TestNotifier(QueryPrepared(q)) => query_id = Some(q),
+				_ => (),
 			}
-		});
+		}
+	});
 	let query_id = query_id.unwrap();
 
 	let mut block_builder = client.init_polkadot_block_builder();
@@ -125,9 +120,9 @@ fn query_response_fires() {
 
 	let execute = construct_extrinsic(
 		&client,
-		polkadot_test_runtime::Call::Xcm(pallet_xcm::Call::execute {
+		polkadot_test_runtime::RuntimeCall::Xcm(pallet_xcm::Call::execute {
 			message: msg,
-			max_weight: Weight::from_ref_time(1_000_000_000),
+			max_weight: 1_000_000_000,
 		}),
 		sp_keyring::Sr25519Keyring::Alice,
 		1,
@@ -141,31 +136,28 @@ fn query_response_fires() {
 	futures::executor::block_on(client.import(sp_consensus::BlockOrigin::Own, block))
 		.expect("imports the block");
 
-	client
-		.state_at(&BlockId::Hash(block_hash))
-		.expect("state should exist")
-		.inspect_state(|| {
-			assert!(polkadot_test_runtime::System::events().iter().any(|r| matches!(
-				r.event,
-				polkadot_test_runtime::Event::Xcm(pallet_xcm::Event::ResponseReady(
-					q,
-					Response::ExecutionResult(None),
-				)) if q == query_id,
-			)));
-			assert_eq!(
-				polkadot_test_runtime::Xcm::query(query_id),
-				Some(QueryStatus::Ready {
-					response: VersionedResponse::V2(Response::ExecutionResult(None)),
-					at: 2u32.into()
-				}),
-			)
-		});
+	client.state_at(&block_hash).expect("state should exist").inspect_state(|| {
+		assert!(polkadot_test_runtime::System::events().iter().any(|r| matches!(
+			r.event,
+			polkadot_test_runtime::RuntimeEvent::Xcm(pallet_xcm::Event::ResponseReady(
+				q,
+				Response::ExecutionResult(None),
+			)) if q == query_id,
+		)));
+		assert_eq!(
+			polkadot_test_runtime::Xcm::query(query_id),
+			Some(QueryStatus::Ready {
+				response: VersionedResponse::V2(Response::ExecutionResult(None)),
+				at: 2u32.into()
+			}),
+		)
+	});
 }
 
 #[test]
 fn query_response_elicits_handler() {
 	use pallet_test_notifier::Event::*;
-	use polkadot_test_runtime::Event::TestNotifier;
+	use polkadot_test_runtime::RuntimeEvent::TestNotifier;
 
 	sp_tracing::try_init_simple();
 	let mut client = TestClientBuilder::new()
@@ -176,7 +168,7 @@ fn query_response_elicits_handler() {
 
 	let execute = construct_extrinsic(
 		&client,
-		polkadot_test_runtime::Call::TestNotifier(
+		polkadot_test_runtime::RuntimeCall::TestNotifier(
 			pallet_test_notifier::Call::prepare_new_notify_query {},
 		),
 		sp_keyring::Sr25519Keyring::Alice,
@@ -192,17 +184,14 @@ fn query_response_elicits_handler() {
 		.expect("imports the block");
 
 	let mut query_id = None;
-	client
-		.state_at(&BlockId::Hash(block_hash))
-		.expect("state should exist")
-		.inspect_state(|| {
-			for r in polkadot_test_runtime::System::events().iter() {
-				match r.event {
-					TestNotifier(NotifyQueryPrepared(q)) => query_id = Some(q),
-					_ => (),
-				}
+	client.state_at(&block_hash).expect("state should exist").inspect_state(|| {
+		for r in polkadot_test_runtime::System::events().iter() {
+			match r.event {
+				TestNotifier(NotifyQueryPrepared(q)) => query_id = Some(q),
+				_ => (),
 			}
-		});
+		}
+	});
 	let query_id = query_id.unwrap();
 
 	let mut block_builder = client.init_polkadot_block_builder();
@@ -213,9 +202,9 @@ fn query_response_elicits_handler() {
 
 	let execute = construct_extrinsic(
 		&client,
-		polkadot_test_runtime::Call::Xcm(pallet_xcm::Call::execute {
+		polkadot_test_runtime::RuntimeCall::Xcm(pallet_xcm::Call::execute {
 			message: Box::new(VersionedXcm::from(msg)),
-			max_weight: Weight::from_ref_time(1_000_000_000),
+			max_weight: 1_000_000_000,
 		}),
 		sp_keyring::Sr25519Keyring::Alice,
 		1,
@@ -229,17 +218,14 @@ fn query_response_elicits_handler() {
 	futures::executor::block_on(client.import(sp_consensus::BlockOrigin::Own, block))
 		.expect("imports the block");
 
-	client
-		.state_at(&BlockId::Hash(block_hash))
-		.expect("state should exist")
-		.inspect_state(|| {
-			assert!(polkadot_test_runtime::System::events().iter().any(|r| matches!(
-				r.event,
-				TestNotifier(ResponseReceived(
-					MultiLocation { parents: 0, interior: X1(Junction::AccountId32 { .. }) },
-					q,
-					Response::ExecutionResult(None),
-				)) if q == query_id,
-			)));
-		});
+	client.state_at(&block_hash).expect("state should exist").inspect_state(|| {
+		assert!(polkadot_test_runtime::System::events().iter().any(|r| matches!(
+			r.event,
+			TestNotifier(ResponseReceived(
+				MultiLocation { parents: 0, interior: X1(Junction::AccountId32 { .. }) },
+				q,
+				Response::ExecutionResult(None),
+			)) if q == query_id,
+		)));
+	});
 }
