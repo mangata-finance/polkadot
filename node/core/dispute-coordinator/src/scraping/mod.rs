@@ -14,15 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-	collections::{BTreeMap, HashSet},
-	num::NonZeroUsize,
-};
+use std::num::NonZeroUsize;
 
 use futures::channel::oneshot;
 use lru::LruCache;
 
-use polkadot_node_primitives::MAX_FINALITY_LAG;
+use polkadot_node_primitives::{DISPUTE_CANDIDATE_LIFETIME_AFTER_FINALIZATION, MAX_FINALITY_LAG};
 use polkadot_node_subsystem::{
 	messages::ChainApiMessage, overseer, ActivatedLeaf, ActiveLeavesUpdate, ChainApiError,
 	SubsystemSender,
@@ -39,6 +36,8 @@ use crate::{
 
 #[cfg(test)]
 mod tests;
+
+mod candidates;
 
 /// Number of hashes to keep in the LRU.
 ///
@@ -58,18 +57,21 @@ const LRU_OBSERVED_BLOCKS_CAPACITY: NonZeroUsize = match NonZeroUsize::new(20) {
 ///
 /// Concretely:
 ///
-/// - Monitors for inclusion events to keep track of candidates that have been included on chains.
+/// - Monitors for `CandidateIncluded` events to keep track of candidates that have been
+///   included on chains.
+/// - Monitors for `CandidateBacked` events to keep track of all backed candidates.
 /// - Calls `FetchOnChainVotes` for each block to gather potentially missed votes from chain.
 ///
 /// With this information it provides a `CandidateComparator` and as a return value of
 /// `process_active_leaves_update` any scraped votes.
+///
+/// Scraped candidates are available `DISPUTE_CANDIDATE_LIFETIME_AFTER_FINALIZATION` more blocks
+/// after finalization as a precaution not to prune them prematurely.
 pub struct ChainScraper {
 	/// All candidates we have seen included, which not yet have been finalized.
-	included_candidates: HashSet<CandidateHash>,
-	/// including block -> `CandidateHash`
-	///
-	/// We need this to clean up `included_candidates` on finalization.
-	candidates_by_block_number: BTreeMap<BlockNumber, HashSet<CandidateHash>>,
+	included_candidates: candidates::ScrapedCandidates,
+	/// All candidates we have seen backed
+	backed_candidates: candidates::ScrapedCandidates,
 	/// Latest relay blocks observed by the provider.
 	///
 	/// We assume that ancestors of cached blocks are already processed, i.e. we have saved
@@ -96,8 +98,8 @@ impl ChainScraper {
 		Sender: overseer::DisputeCoordinatorSenderTrait,
 	{
 		let mut s = Self {
-			included_candidates: HashSet::new(),
-			candidates_by_block_number: BTreeMap::new(),
+			included_candidates: candidates::ScrapedCandidates::new(),
+			backed_candidates: candidates::ScrapedCandidates::new(),
 			last_observed_blocks: LruCache::new(LRU_OBSERVED_BLOCKS_CAPACITY),
 		};
 		let update =
@@ -107,8 +109,13 @@ impl ChainScraper {
 	}
 
 	/// Check whether we have seen a candidate included on any chain.
-	pub fn is_candidate_included(&mut self, candidate_hash: &CandidateHash) -> bool {
+	pub fn is_candidate_included(&self, candidate_hash: &CandidateHash) -> bool {
 		self.included_candidates.contains(candidate_hash)
+	}
+
+	/// Check whether the candidate is backed
+	pub fn is_candidate_backed(&self, candidate_hash: &CandidateHash) -> bool {
+		self.backed_candidates.contains(candidate_hash)
 	}
 
 	/// Query active leaves for any candidate `CandidateEvent::CandidateIncluded` events.
@@ -120,7 +127,7 @@ impl ChainScraper {
 		&mut self,
 		sender: &mut Sender,
 		update: &ActiveLeavesUpdate,
-	) -> crate::error::Result<Vec<ScrapedOnChainVotes>>
+	) -> Result<Vec<ScrapedOnChainVotes>>
 	where
 		Sender: overseer::DisputeCoordinatorSenderTrait,
 	{
@@ -158,21 +165,28 @@ impl ChainScraper {
 
 	/// Prune finalized candidates.
 	///
-	/// Once a candidate lives in a relay chain block that's behind the finalized chain/got
-	/// finalized, we can treat it as low priority.
-	pub fn process_finalized_block(&mut self, finalized: &BlockNumber) {
-		let not_finalized = self.candidates_by_block_number.split_off(finalized);
-		let finalized = std::mem::take(&mut self.candidates_by_block_number);
-		self.candidates_by_block_number = not_finalized;
-		// Clean up finalized:
-		for finalized_candidate in finalized.into_values().flatten() {
-			self.included_candidates.remove(&finalized_candidate);
+	/// We keep each candidate for `DISPUTE_CANDIDATE_LIFETIME_AFTER_FINALIZATION` blocks after finalization.
+	/// After that we treat it as low priority.
+	pub fn process_finalized_block(&mut self, finalized_block_number: &BlockNumber) {
+		// `DISPUTE_CANDIDATE_LIFETIME_AFTER_FINALIZATION - 1` because `finalized_block_number`counts to the
+		// candidate lifetime.
+		match finalized_block_number.checked_sub(DISPUTE_CANDIDATE_LIFETIME_AFTER_FINALIZATION - 1)
+		{
+			Some(key_to_prune) => {
+				self.backed_candidates.remove_up_to_height(&key_to_prune);
+				self.included_candidates.remove_up_to_height(&key_to_prune);
+			},
+			None => {
+				// Nothing to prune. We are still in the beginning of the chain and there are not
+				// enough finalized blocks yet.
+			},
 		}
+		{}
 	}
 
 	/// Process candidate events of a block.
 	///
-	/// Keep track of all included candidates.
+	/// Keep track of all included and backed candidates.
 	async fn process_candidate_events<Sender>(
 		&mut self,
 		sender: &mut Sender,
@@ -182,28 +196,33 @@ impl ChainScraper {
 	where
 		Sender: overseer::DisputeCoordinatorSenderTrait,
 	{
-		// Get included events:
-		let included =
-			get_candidate_events(sender, block_hash)
-				.await?
-				.into_iter()
-				.filter_map(|ev| match ev {
-					CandidateEvent::CandidateIncluded(receipt, _, _, _) => Some(receipt),
-					_ => None,
-				});
-		for receipt in included {
-			let candidate_hash = receipt.hash();
-			gum::trace!(
-				target: LOG_TARGET,
-				?candidate_hash,
-				?block_number,
-				"Processing included event"
-			);
-			self.included_candidates.insert(candidate_hash);
-			self.candidates_by_block_number
-				.entry(block_number)
-				.or_default()
-				.insert(candidate_hash);
+		// Get included and backed events:
+		for ev in get_candidate_events(sender, block_hash).await? {
+			match ev {
+				CandidateEvent::CandidateIncluded(receipt, _, _, _) => {
+					let candidate_hash = receipt.hash();
+					gum::trace!(
+						target: LOG_TARGET,
+						?candidate_hash,
+						?block_number,
+						"Processing included event"
+					);
+					self.included_candidates.insert(block_number, candidate_hash);
+				},
+				CandidateEvent::CandidateBacked(receipt, _, _, _) => {
+					let candidate_hash = receipt.hash();
+					gum::trace!(
+						target: LOG_TARGET,
+						?candidate_hash,
+						?block_number,
+						"Processing backed event"
+					);
+					self.backed_candidates.insert(block_number, candidate_hash);
+				},
+				_ => {
+					// skip the rest
+				},
+			}
 		}
 		Ok(())
 	}
