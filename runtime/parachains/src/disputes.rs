@@ -985,8 +985,7 @@ impl<T: Config> Pallet<T> {
 			let mut importer = DisputeStateImporter::new(dispute_state, now);
 			for (i, (statement, validator_index, signature)) in set.statements.iter().enumerate() {
 				// assure the validator index and is present in the session info
-				let validator_public = match session_info.validators.get(validator_index.0 as usize)
-				{
+				let validator_public = match session_info.validators.get(*validator_index) {
 					None => {
 						filter.remove_index(i);
 						continue
@@ -1113,7 +1112,7 @@ impl<T: Config> Pallet<T> {
 				// it's sufficient to count the votes in the statement set after they
 				set.statements.iter().for_each(|(statement, v_i, _signature)| {
 					if Some(true) ==
-						summary.new_participants.get(v_i.0 as usize).map(|b| b.as_ref().clone())
+						summary.new_participants.get(v_i.0 as usize).map(|b| *b.as_ref())
 					{
 						match statement {
 							// `summary.new_flags` contains the spam free votes.
