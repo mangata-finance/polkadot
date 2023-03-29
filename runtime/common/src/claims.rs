@@ -23,7 +23,7 @@ use frame_support::{
 };
 pub use pallet::*;
 use parity_scale_codec::{Decode, Encode};
-use primitives::v2::ValidityError;
+use primitives::ValidityError;
 use scale_info::TypeInfo;
 #[cfg(feature = "std")]
 use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
@@ -164,7 +164,6 @@ pub mod pallet {
 	use frame_system::pallet_prelude::*;
 
 	#[pallet::pallet]
-	#[pallet::generate_store(pub(super) trait Store)]
 	#[pallet::without_storage_info]
 	pub struct Pallet<T>(_);
 
@@ -305,6 +304,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(1)
 		/// </weight>
+		#[pallet::call_index(0)]
 		#[pallet::weight(T::WeightInfo::claim())]
 		pub fn claim(
 			origin: OriginFor<T>,
@@ -337,6 +337,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(1)
 		/// </weight>
+		#[pallet::call_index(1)]
 		#[pallet::weight(T::WeightInfo::mint_claim())]
 		pub fn mint_claim(
 			origin: OriginFor<T>,
@@ -384,6 +385,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(1)
 		/// </weight>
+		#[pallet::call_index(2)]
 		#[pallet::weight(T::WeightInfo::claim_attest())]
 		pub fn claim_attest(
 			origin: OriginFor<T>,
@@ -420,6 +422,7 @@ pub mod pallet {
 		///
 		/// Total Complexity: O(1)
 		/// </weight>
+		#[pallet::call_index(3)]
 		#[pallet::weight((
 			T::WeightInfo::attest(),
 			DispatchClass::Normal,
@@ -436,6 +439,7 @@ pub mod pallet {
 			Ok(())
 		}
 
+		#[pallet::call_index(4)]
 		#[pallet::weight(T::WeightInfo::move_claim())]
 		pub fn move_claim(
 			origin: OriginFor<T>,
