@@ -91,7 +91,6 @@ pub mod pallet {
 	use super::*;
 
 	#[pallet::pallet]
-	#[pallet::generate_store(pub(super) trait Store)]
 	#[pallet::without_storage_info]
 	pub struct Pallet<T>(_);
 
@@ -195,7 +194,8 @@ pub mod pallet {
 		/// We check that the account does not exist at this stage.
 		///
 		/// Origin must match the `ValidityOrigin`.
-		#[pallet::weight(Weight::from_ref_time(200_000_000) + T::DbWeight::get().reads_writes(4, 1))]
+		#[pallet::call_index(0)]
+		#[pallet::weight(Weight::from_parts(200_000_000, 0) + T::DbWeight::get().reads_writes(4, 1))]
 		pub fn create_account(
 			origin: OriginFor<T>,
 			who: T::AccountId,
@@ -232,6 +232,7 @@ pub mod pallet {
 		/// We check that the account exists at this stage, but has not completed the process.
 		///
 		/// Origin must match the `ValidityOrigin`.
+		#[pallet::call_index(1)]
 		#[pallet::weight(T::DbWeight::get().reads_writes(1, 1))]
 		pub fn update_validity_status(
 			origin: OriginFor<T>,
@@ -260,6 +261,7 @@ pub mod pallet {
 		/// We check that the account is valid for a balance transfer at this point.
 		///
 		/// Origin must match the `ValidityOrigin`.
+		#[pallet::call_index(2)]
 		#[pallet::weight(T::DbWeight::get().reads_writes(2, 1))]
 		pub fn update_balance(
 			origin: OriginFor<T>,
@@ -297,6 +299,7 @@ pub mod pallet {
 		///
 		/// Origin must match the configured `PaymentAccount` (if it is not configured then this
 		/// will always fail with `BadOrigin`).
+		#[pallet::call_index(3)]
 		#[pallet::weight(T::DbWeight::get().reads_writes(4, 2))]
 		pub fn payout(origin: OriginFor<T>, who: T::AccountId) -> DispatchResult {
 			// Payments must be made directly by the `PaymentAccount`.
@@ -366,6 +369,7 @@ pub mod pallet {
 		/// Set the account that will be used to payout users in the DOT purchase process.
 		///
 		/// Origin must match the `ConfigurationOrigin`
+		#[pallet::call_index(4)]
 		#[pallet::weight(T::DbWeight::get().writes(1))]
 		pub fn set_payment_account(origin: OriginFor<T>, who: T::AccountId) -> DispatchResult {
 			T::ConfigurationOrigin::ensure_origin(origin)?;
@@ -378,6 +382,7 @@ pub mod pallet {
 		/// Set the statement that must be signed for a user to participate on the DOT sale.
 		///
 		/// Origin must match the `ConfigurationOrigin`
+		#[pallet::call_index(5)]
 		#[pallet::weight(T::DbWeight::get().writes(1))]
 		pub fn set_statement(origin: OriginFor<T>, statement: Vec<u8>) -> DispatchResult {
 			T::ConfigurationOrigin::ensure_origin(origin)?;
@@ -394,6 +399,7 @@ pub mod pallet {
 		/// Set the block where locked DOTs will become unlocked.
 		///
 		/// Origin must match the `ConfigurationOrigin`
+		#[pallet::call_index(6)]
 		#[pallet::weight(T::DbWeight::get().writes(1))]
 		pub fn set_unlock_block(
 			origin: OriginFor<T>,

@@ -45,7 +45,7 @@ use polkadot_node_subsystem::{
 	overseer, ActivatedLeaf, ActiveLeavesUpdate, FromOrchestra, OverseerSignal, SpawnedSubsystem,
 };
 
-use polkadot_primitives::v2::{AuthorityDiscoveryId, BlockNumber, Hash, ValidatorIndex};
+use polkadot_primitives::{AuthorityDiscoveryId, BlockNumber, Hash, ValidatorIndex};
 
 /// Peer set info for network initialization.
 ///
@@ -145,14 +145,13 @@ where
 	loop {
 		match network_stream.next().await {
 			None => return Err(Error::EventStreamConcluded),
-			Some(NetworkEvent::Dht(_)) |
-			Some(NetworkEvent::SyncConnected { .. }) |
-			Some(NetworkEvent::SyncDisconnected { .. }) => {},
+			Some(NetworkEvent::Dht(_)) => {},
 			Some(NetworkEvent::NotificationStreamOpened {
 				remote: peer,
 				protocol,
 				role,
 				negotiated_fallback,
+				received_handshake: _,
 			}) => {
 				let role = ObservedRole::from(role);
 				let (peer_set, version) = {
