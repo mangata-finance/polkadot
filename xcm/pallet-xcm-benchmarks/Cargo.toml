@@ -20,7 +20,7 @@ xcm-executor = { path = "../xcm-executor", default-features = false }
 frame-benchmarking = { default-features = false, branch = "master", git = "https://github.com/paritytech/substrate" }
 xcm = { path = "..", default-features = false }
 xcm-builder = { path = "../xcm-builder", default-features = false }
-log = "0.4.17"
+log = "0.4.20"
 
 [dev-dependencies]
 pallet-balances = { branch = "master", git = "https://github.com/paritytech/substrate" }

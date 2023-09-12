@@ -87,7 +87,7 @@ codec = { package = "parity-scale-codec", version = "3.6.1" }
 
 async-trait = "0.1.57"
 lru = "0.11.0"
-log = "0.4.17"
+log = "0.4.20"
 is_executable = "1.0.1"
 
 # Polkadot
