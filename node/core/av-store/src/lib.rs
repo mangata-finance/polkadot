@@ -26,17 +26,24 @@ use std::{
 	time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
-use futures::{channel::oneshot, future, select, FutureExt};
+use futures::{
+	channel::{
+		mpsc::{channel, Receiver as MpscReceiver, Sender as MpscSender},
+		oneshot,
+	},
+	future, select, FutureExt, SinkExt, StreamExt,
+};
 use futures_timer::Delay;
 use parity_scale_codec::{Decode, Encode, Error as CodecError, Input};
 use polkadot_node_subsystem_util::database::{DBTransaction, Database};
 use sp_consensus::SyncOracle;
 
 use bitvec::{order::Lsb0 as BitOrderLsb0, vec::BitVec};
+use polkadot_node_jaeger as jaeger;
 use polkadot_node_primitives::{AvailableData, ErasureChunk};
 use polkadot_node_subsystem::{
 	errors::{ChainApiError, RuntimeApiError},
-	messages::{AvailabilityStoreMessage, ChainApiMessage},
+	messages::{AvailabilityStoreMessage, ChainApiMessage, StoreAvailableDataError},
 	overseer, ActiveLeavesUpdate, FromOrchestra, OverseerSignal, SpawnedSubsystem, SubsystemError,
 };
 use polkadot_node_subsystem_util as util;
@@ -60,8 +67,8 @@ const META_PREFIX: &[u8; 4] = b"meta";
 const UNFINALIZED_PREFIX: &[u8; 11] = b"unfinalized";
 const PRUNE_BY_TIME_PREFIX: &[u8; 13] = b"prune_by_time";
 
-// We have some keys we want to map to empty values because existence of the key is enough. We use this because
-// rocksdb doesn't support empty values.
+// We have some keys we want to map to empty values because existence of the key is enough. We use
+// this because rocksdb doesn't support empty values.
 const TOMBSTONE_VALUE: &[u8] = b" ";
 
 /// Unavailable blocks are kept for 1 hour.
@@ -132,10 +139,11 @@ enum State {
 	/// Candidate data was first observed at the given time but is not available in any block.
 	#[codec(index = 0)]
 	Unavailable(BETimestamp),
-	/// The candidate was first observed at the given time and was included in the given list of unfinalized blocks, which may be
-	/// empty. The timestamp here is not used for pruning. Either one of these blocks will be finalized or the state will regress to
-	/// `State::Unavailable`, in which case the same timestamp will be reused. Blocks are sorted ascending first by block number and
-	/// then hash.
+	/// The candidate was first observed at the given time and was included in the given list of
+	/// unfinalized blocks, which may be empty. The timestamp here is not used for pruning. Either
+	/// one of these blocks will be finalized or the state will regress to `State::Unavailable`, in
+	/// which case the same timestamp will be reused. Blocks are sorted ascending first by block
+	/// number and then hash.
 	#[codec(index = 1)]
 	Unfinalized(BETimestamp, Vec<(BEBlockNumber, Hash)>),
 	/// Candidate data has appeared in a finalized block and did so at the given time.
@@ -366,6 +374,9 @@ pub enum Error {
 
 	#[error("Custom databases are not supported")]
 	CustomDatabase,
+
+	#[error("Erasure root does not match expected one")]
+	InvalidErasureRoot,
 }
 
 impl Error {
@@ -540,9 +551,17 @@ impl<Context> AvailabilityStoreSubsystem {
 #[overseer::contextbounds(AvailabilityStore, prefix = self::overseer)]
 async fn run<Context>(mut subsystem: AvailabilityStoreSubsystem, mut ctx: Context) {
 	let mut next_pruning = Delay::new(subsystem.pruning_config.pruning_interval).fuse();
-
+	// Pruning interval is in the order of minutes so we shouldn't have more than one task running
+	// at one moment in time, so 10 should be more than enough.
+	let (mut pruning_result_tx, mut pruning_result_rx) = channel(10);
 	loop {
-		let res = run_iteration(&mut ctx, &mut subsystem, &mut next_pruning).await;
+		let res = run_iteration(
+			&mut ctx,
+			&mut subsystem,
+			&mut next_pruning,
+			(&mut pruning_result_tx, &mut pruning_result_rx),
+		)
+		.await;
 		match res {
 			Err(e) => {
 				e.trace();
@@ -564,6 +583,10 @@ async fn run_iteration<Context>(
 	ctx: &mut Context,
 	subsystem: &mut AvailabilityStoreSubsystem,
 	mut next_pruning: &mut future::Fuse<Delay>,
+	(pruning_result_tx, pruning_result_rx): (
+		&mut MpscSender<Result<(), Error>>,
+		&mut MpscReceiver<Result<(), Error>>,
+	),
 ) -> Result<bool, Error> {
 	select! {
 		incoming = ctx.recv().fuse() => {
@@ -612,13 +635,49 @@ async fn run_iteration<Context>(
 			// It's important to set the delay before calling `prune_all` because an error in `prune_all`
 			// could lead to the delay not being set again. Then we would never prune anything anymore.
 			*next_pruning = Delay::new(subsystem.pruning_config.pruning_interval).fuse();
-
-			let _timer = subsystem.metrics.time_pruning();
-			prune_all(&subsystem.db, &subsystem.config, &*subsystem.clock)?;
-		}
+			start_prune_all(ctx, subsystem, pruning_result_tx.clone()).await?;
+		},
+		// Received the prune result and propagate the errors, so that in case of a fatal error
+		// the main loop of the subsystem can exit graciously.
+		result = pruning_result_rx.next() => {
+			if let Some(result) = result {
+				result?;
+			}
+		},
 	}
 
 	Ok(false)
+}
+
+// Start prune-all on a separate thread, so that in the case when the operation takes
+// longer than expected we don't keep the whole subsystem blocked.
+// See: https://github.com/paritytech/polkadot/issues/7237 for more details.
+#[overseer::contextbounds(AvailabilityStore, prefix = self::overseer)]
+async fn start_prune_all<Context>(
+	ctx: &mut Context,
+	subsystem: &mut AvailabilityStoreSubsystem,
+	mut pruning_result_tx: MpscSender<Result<(), Error>>,
+) -> Result<(), Error> {
+	let metrics = subsystem.metrics.clone();
+	let db = subsystem.db.clone();
+	let config = subsystem.config;
+	let time_now = subsystem.clock.now()?;
+
+	ctx.spawn_blocking(
+		"av-store-prunning",
+		Box::pin(async move {
+			let _timer = metrics.time_pruning();
+
+			gum::debug!(target: LOG_TARGET, "Prunning started");
+			let result = prune_all(&db, &config, time_now);
+
+			if let Err(err) = pruning_result_tx.send(result).await {
+				// This usually means that the node is closing down, log it just in case
+				gum::debug!(target: LOG_TARGET, ?err, "Failed to send prune_all result",);
+			}
+		}),
+	)?;
+	Ok(())
 }
 
 #[overseer::contextbounds(AvailabilityStore, prefix = self::overseer)]
@@ -762,8 +821,8 @@ fn note_block_included(
 
 	match load_meta(db, config, &candidate_hash)? {
 		None => {
-			// This is alarming. We've observed a block being included without ever seeing it backed.
-			// Warn and ignore.
+			// This is alarming. We've observed a block being included without ever seeing it
+			// backed. Warn and ignore.
 			gum::warn!(
 				target: LOG_TARGET,
 				?candidate_hash,
@@ -836,9 +895,9 @@ async fn process_block_finalized<Context>(
 		let mut db_transaction = DBTransaction::new();
 		let (start_prefix, end_prefix) = finalized_block_range(finalized_number);
 
-		// We have to do some juggling here of the `iter` to make sure it doesn't cross the `.await` boundary
-		// as it is not `Send`. That is why we create the iterator once within this loop, drop it,
-		// do an asynchronous request, and then instantiate the exact same iterator again.
+		// We have to do some juggling here of the `iter` to make sure it doesn't cross the `.await`
+		// boundary as it is not `Send`. That is why we create the iterator once within this loop,
+		// drop it, do an asynchronous request, and then instantiate the exact same iterator again.
 		let batch_num = {
 			let mut iter = subsystem
 				.db
@@ -903,8 +962,9 @@ async fn process_block_finalized<Context>(
 
 		update_blocks_at_finalized_height(&subsystem, &mut db_transaction, batch, batch_num, now)?;
 
-		// We need to write at the end of the loop so the prefix iterator doesn't pick up the same values again
-		// in the next iteration. Another unfortunate effect of having to re-initialize the iterator.
+		// We need to write at the end of the loop so the prefix iterator doesn't pick up the same
+		// values again in the next iteration. Another unfortunate effect of having to re-initialize
+		// the iterator.
 		subsystem.db.write(db_transaction)?;
 	}
 
@@ -1052,6 +1112,25 @@ fn process_message(
 			let _ =
 				tx.send(load_chunk(&subsystem.db, &subsystem.config, &candidate, validator_index)?);
 		},
+		AvailabilityStoreMessage::QueryChunkSize(candidate, tx) => {
+			let meta = load_meta(&subsystem.db, &subsystem.config, &candidate)?;
+
+			let validator_index = meta.map_or(None, |meta| meta.chunks_stored.first_one());
+
+			let maybe_chunk_size = if let Some(validator_index) = validator_index {
+				load_chunk(
+					&subsystem.db,
+					&subsystem.config,
+					&candidate,
+					ValidatorIndex(validator_index as u32),
+				)?
+				.map(|erasure_chunk| erasure_chunk.chunk.len())
+			} else {
+				None
+			};
+
+			let _ = tx.send(maybe_chunk_size);
+		},
 		AvailabilityStoreMessage::QueryAllChunks(candidate, tx) => {
 			match load_meta(&subsystem.db, &subsystem.config, &candidate)? {
 				None => {
@@ -1111,21 +1190,35 @@ fn process_message(
 			candidate_hash,
 			n_validators,
 			available_data,
+			expected_erasure_root,
 			tx,
 		} => {
 			subsystem.metrics.on_chunks_received(n_validators as _);
 
 			let _timer = subsystem.metrics.time_store_available_data();
 
-			let res =
-				store_available_data(&subsystem, candidate_hash, n_validators as _, available_data);
+			let res = store_available_data(
+				&subsystem,
+				candidate_hash,
+				n_validators as _,
+				available_data,
+				expected_erasure_root,
+			);
 
 			match res {
 				Ok(()) => {
 					let _ = tx.send(Ok(()));
 				},
+				Err(Error::InvalidErasureRoot) => {
+					let _ = tx.send(Err(StoreAvailableDataError::InvalidErasureRoot));
+					return Err(Error::InvalidErasureRoot)
+				},
 				Err(e) => {
-					let _ = tx.send(Err(()));
+					// We do not bubble up internal errors to caller subsystems, instead the
+					// tx channel is dropped and that error is caught by the caller subsystem.
+					//
+					// We bubble up the specific error here so `av-store` logs still tell what
+					// happend.
 					return Err(e.into())
 				},
 			}
@@ -1177,6 +1270,7 @@ fn store_available_data(
 	candidate_hash: CandidateHash,
 	n_validators: usize,
 	available_data: AvailableData,
+	expected_erasure_root: Hash,
 ) -> Result<(), Error> {
 	let mut tx = DBTransaction::new();
 
@@ -1203,8 +1297,20 @@ fn store_available_data(
 		},
 	};
 
+	let erasure_span = jaeger::Span::new(candidate_hash, "erasure-coding")
+		.with_candidate(candidate_hash)
+		.with_pov(&available_data.pov);
+
+	// Important note: This check below is critical for consensus and the `backing` subsystem relies
+	// on it to ensure candidate validity.
 	let chunks = erasure::obtain_chunks_v1(n_validators, &available_data)?;
 	let branches = erasure::branches(chunks.as_ref());
+
+	if branches.root() != expected_erasure_root {
+		return Err(Error::InvalidErasureRoot)
+	}
+
+	drop(erasure_span);
 
 	let erasure_chunks = chunks.iter().zip(branches.map(|(proof, _)| proof)).enumerate().map(
 		|(index, (chunk, proof))| ErasureChunk {
@@ -1231,8 +1337,7 @@ fn store_available_data(
 	Ok(())
 }
 
-fn prune_all(db: &Arc<dyn Database>, config: &Config, clock: &dyn Clock) -> Result<(), Error> {
-	let now = clock.now()?;
+fn prune_all(db: &Arc<dyn Database>, config: &Config, now: Duration) -> Result<(), Error> {
 	let (range_start, range_end) = pruning_range(now);
 
 	let mut tx = DBTransaction::new();

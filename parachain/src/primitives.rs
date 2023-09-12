@@ -23,14 +23,9 @@ use bounded_collections::{BoundedVec, ConstU32};
 use frame_support::weights::Weight;
 use parity_scale_codec::{CompactAs, Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
-use sp_core::{RuntimeDebug, TypeId};
-use sp_runtime::traits::Hash as _;
-
-#[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
-
-#[cfg(feature = "std")]
-use sp_core::bytes;
+use sp_core::{bytes, RuntimeDebug, TypeId};
+use sp_runtime::traits::Hash as _;
 
 use polkadot_core_primitives::{Hash, OutboundHrmpMessage};
 
@@ -39,10 +34,21 @@ pub use polkadot_core_primitives::BlockNumber as RelayChainBlockNumber;
 
 /// Parachain head data included in the chain.
 #[derive(
-	PartialEq, Eq, Clone, PartialOrd, Ord, Encode, Decode, RuntimeDebug, derive_more::From, TypeInfo,
+	PartialEq,
+	Eq,
+	Clone,
+	PartialOrd,
+	Ord,
+	Encode,
+	Decode,
+	RuntimeDebug,
+	derive_more::From,
+	TypeInfo,
+	Serialize,
+	Deserialize,
 )]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize, Hash, Default))]
-pub struct HeadData(#[cfg_attr(feature = "std", serde(with = "bytes"))] pub Vec<u8>);
+#[cfg_attr(feature = "std", derive(Hash, Default))]
+pub struct HeadData(#[serde(with = "bytes")] pub Vec<u8>);
 
 impl HeadData {
 	/// Returns the hash of this head data.
@@ -52,9 +58,20 @@ impl HeadData {
 }
 
 /// Parachain validation code.
-#[derive(PartialEq, Eq, Clone, Encode, Decode, RuntimeDebug, derive_more::From, TypeInfo)]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize, Hash))]
-pub struct ValidationCode(#[cfg_attr(feature = "std", serde(with = "bytes"))] pub Vec<u8>);
+#[derive(
+	PartialEq,
+	Eq,
+	Clone,
+	Encode,
+	Decode,
+	RuntimeDebug,
+	derive_more::From,
+	TypeInfo,
+	Serialize,
+	Deserialize,
+)]
+#[cfg_attr(feature = "std", derive(Hash))]
+pub struct ValidationCode(#[serde(with = "bytes")] pub Vec<u8>);
 
 impl ValidationCode {
 	/// Get the blake2-256 hash of the validation code bytes.
@@ -63,7 +80,8 @@ impl ValidationCode {
 	}
 }
 
-/// Unit type wrapper around [`type@Hash`] that represents a validation code hash.
+/// Unit type wrapper around [`type@Hash`] that represents the blake2-256 hash
+/// of validation code in particular.
 ///
 /// This type is produced by [`ValidationCode::hash`].
 ///
@@ -129,9 +147,11 @@ pub struct BlockData(#[cfg_attr(feature = "std", serde(with = "bytes"))] pub Vec
 	PartialEq,
 	PartialOrd,
 	RuntimeDebug,
+	serde::Serialize,
+	serde::Deserialize,
 	TypeInfo,
 )]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize, derive_more::Display))]
+#[cfg_attr(feature = "std", derive(derive_more::Display))]
 pub struct Id(u32);
 
 impl TypeId for Id {
@@ -268,13 +288,13 @@ impl IsSystem for Sibling {
 	}
 }
 
-/// A type that uniquely identifies an HRMP channel. An HRMP channel is established between two paras.
-/// In text, we use the notation `(A, B)` to specify a channel between A and B. The channels are
-/// unidirectional, meaning that `(A, B)` and `(B, A)` refer to different channels. The convention is
-/// that we use the first item tuple for the sender and the second for the recipient. Only one channel
-/// is allowed between two participants in one direction, i.e. there cannot be 2 different channels
-/// identified by `(A, B)`. A channel with the same para id in sender and recipient is invalid. That
-/// is, however, not enforced.
+/// A type that uniquely identifies an HRMP channel. An HRMP channel is established between two
+/// paras. In text, we use the notation `(A, B)` to specify a channel between A and B. The channels
+/// are unidirectional, meaning that `(A, B)` and `(B, A)` refer to different channels. The
+/// convention is that we use the first item tuple for the sender and the second for the recipient.
+/// Only one channel is allowed between two participants in one direction, i.e. there cannot be 2
+/// different channels identified by `(A, B)`. A channel with the same para id in sender and
+/// recipient is invalid. That is, however, not enforced.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Encode, Decode, RuntimeDebug, TypeInfo)]
 #[cfg_attr(feature = "std", derive(Hash))]
 pub struct HrmpChannelId {
@@ -395,6 +415,7 @@ pub struct ValidationResult {
 	///
 	/// It is expected that the Parachain processes them from first to last.
 	pub processed_downward_messages: u32,
-	/// The mark which specifies the block number up to which all inbound HRMP messages are processed.
+	/// The mark which specifies the block number up to which all inbound HRMP messages are
+	/// processed.
 	pub hrmp_watermark: RelayChainBlockNumber,
 }

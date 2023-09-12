@@ -26,6 +26,7 @@ use xcm_executor::{traits::prelude::*, Config, XcmExecutor};
 mod mock;
 use mock::*;
 
+mod aliases;
 mod assets;
 mod barriers;
 mod basic;
@@ -33,6 +34,7 @@ mod bridging;
 mod expecting;
 mod locking;
 mod origins;
+mod pay;
 mod querying;
 mod transacting;
 mod version_subscriptions;

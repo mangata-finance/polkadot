@@ -28,15 +28,27 @@ use bounded_collections::{BoundedSlice, BoundedVec, ConstU32};
 use core::convert::{TryFrom, TryInto};
 use parity_scale_codec::{self, Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
+use serde::{Deserialize, Serialize};
 
 /// A global identifier of a data structure existing within consensus.
 ///
 /// Maintenance note: Networks with global consensus and which are practically bridgeable within the
 /// Polkadot ecosystem are given preference over explicit naming in this enumeration.
 #[derive(
-	Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Encode, Decode, Debug, TypeInfo, MaxEncodedLen,
+	Copy,
+	Clone,
+	Eq,
+	PartialEq,
+	Ord,
+	PartialOrd,
+	Encode,
+	Decode,
+	Debug,
+	TypeInfo,
+	MaxEncodedLen,
+	Serialize,
+	Deserialize,
 )]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum NetworkId {
 	/// Network specified by the first 32 bytes of its genesis block.
 	ByGenesis([u8; 32]),
@@ -76,11 +88,34 @@ impl From<OldNetworkId> for Option<NetworkId> {
 	}
 }
 
+impl TryFrom<OldNetworkId> for NetworkId {
+	type Error = ();
+	fn try_from(old: OldNetworkId) -> Result<Self, Self::Error> {
+		use OldNetworkId::*;
+		match old {
+			Any | Named(_) => Err(()),
+			Polkadot => Ok(NetworkId::Polkadot),
+			Kusama => Ok(NetworkId::Kusama),
+		}
+	}
+}
+
 /// An identifier of a pluralistic body.
 #[derive(
-	Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Encode, Decode, Debug, TypeInfo, MaxEncodedLen,
+	Copy,
+	Clone,
+	Eq,
+	PartialEq,
+	Ord,
+	PartialOrd,
+	Encode,
+	Decode,
+	Debug,
+	TypeInfo,
+	MaxEncodedLen,
+	Serialize,
+	Deserialize,
 )]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum BodyId {
 	/// The only body in its context.
 	Unit,
@@ -92,20 +127,20 @@ pub enum BodyId {
 	Executive,
 	/// The unambiguous technical body (for Polkadot, this would be the Technical Committee).
 	Technical,
-	/// The unambiguous legislative body (for Polkadot, this could be considered the opinion of a majority of
-	/// lock-voters).
+	/// The unambiguous legislative body (for Polkadot, this could be considered the opinion of a
+	/// majority of lock-voters).
 	Legislative,
-	/// The unambiguous judicial body (this doesn't exist on Polkadot, but if it were to get a "grand oracle", it
-	/// may be considered as that).
+	/// The unambiguous judicial body (this doesn't exist on Polkadot, but if it were to get a
+	/// "grand oracle", it may be considered as that).
 	Judicial,
-	/// The unambiguous defense body (for Polkadot, an opinion on the topic given via a public referendum
-	/// on the `staking_admin` track).
+	/// The unambiguous defense body (for Polkadot, an opinion on the topic given via a public
+	/// referendum on the `staking_admin` track).
 	Defense,
-	/// The unambiguous administration body (for Polkadot, an opinion on the topic given via a public referendum
-	/// on the `general_admin` track).
+	/// The unambiguous administration body (for Polkadot, an opinion on the topic given via a
+	/// public referendum on the `general_admin` track).
 	Administration,
-	/// The unambiguous treasury body (for Polkadot, an opinion on the topic given via a public referendum
-	/// on the `treasurer` track).
+	/// The unambiguous treasury body (for Polkadot, an opinion on the topic given via a public
+	/// referendum on the `treasurer` track).
 	Treasury,
 }
 
@@ -137,9 +172,20 @@ impl TryFrom<OldBodyId> for BodyId {
 
 /// A part of a pluralistic body.
 #[derive(
-	Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Encode, Decode, Debug, TypeInfo, MaxEncodedLen,
+	Copy,
+	Clone,
+	Eq,
+	PartialEq,
+	Ord,
+	PartialOrd,
+	Encode,
+	Decode,
+	Debug,
+	TypeInfo,
+	MaxEncodedLen,
+	Serialize,
+	Deserialize,
 )]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum BodyPart {
 	/// The body's declaration, under whatever means it decides.
 	Voice,
@@ -201,21 +247,32 @@ impl TryFrom<OldBodyPart> for BodyPart {
 ///
 /// Each item assumes a pre-existing location as its context and is defined in terms of it.
 #[derive(
-	Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Encode, Decode, Debug, TypeInfo, MaxEncodedLen,
+	Copy,
+	Clone,
+	Eq,
+	PartialEq,
+	Ord,
+	PartialOrd,
+	Encode,
+	Decode,
+	Debug,
+	TypeInfo,
+	MaxEncodedLen,
+	Serialize,
+	Deserialize,
 )]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub enum Junction {
 	/// An indexed parachain belonging to and operated by the context.
 	///
 	/// Generally used when the context is a Polkadot Relay-chain.
 	Parachain(#[codec(compact)] u32),
-	/// A 32-byte identifier for an account of a specific network that is respected as a sovereign endpoint within
-	/// the context.
+	/// A 32-byte identifier for an account of a specific network that is respected as a sovereign
+	/// endpoint within the context.
 	///
 	/// Generally used when the context is a Substrate-based chain.
 	AccountId32 { network: Option<NetworkId>, id: [u8; 32] },
-	/// An 8-byte index for an account of a specific network that is respected as a sovereign endpoint within
-	/// the context.
+	/// An 8-byte index for an account of a specific network that is respected as a sovereign
+	/// endpoint within the context.
 	///
 	/// May be used when the context is a Frame-based chain and includes e.g. an indices pallet.
 	AccountIndex64 {
@@ -223,14 +280,15 @@ pub enum Junction {
 		#[codec(compact)]
 		index: u64,
 	},
-	/// A 20-byte identifier for an account of a specific network that is respected as a sovereign endpoint within
-	/// the context.
+	/// A 20-byte identifier for an account of a specific network that is respected as a sovereign
+	/// endpoint within the context.
 	///
 	/// May be used when the context is an Ethereum or Bitcoin chain or smart-contract.
 	AccountKey20 { network: Option<NetworkId>, key: [u8; 20] },
 	/// An instanced, indexed pallet that forms a constituent part of the context.
 	///
 	/// Generally used when the context is a Frame-based chain.
+	// TODO XCMv4 inner should be `Compact<u32>`.
 	PalletInstance(u8),
 	/// A non-descript index within the context location.
 	///
@@ -253,8 +311,8 @@ pub enum Junction {
 	OnlyChild,
 	/// A pluralistic body existing within consensus.
 	///
-	/// Typical to be used to represent a governance origin of a chain, but could in principle be used to represent
-	/// things such as multisigs also.
+	/// Typical to be used to represent a governance origin of a chain, but could in principle be
+	/// used to represent things such as multisigs also.
 	Plurality { id: BodyId, part: BodyPart },
 	/// A global network capable of externalizing its own consensus. This is not generally
 	/// meaningful outside of the universal level.
@@ -356,7 +414,8 @@ impl Junction {
 
 	/// Convert `self` into a `MultiLocation` containing `n` parents.
 	///
-	/// Similar to `Self::into_location`, with the added ability to specify the number of parent junctions.
+	/// Similar to `Self::into_location`, with the added ability to specify the number of parent
+	/// junctions.
 	pub const fn into_exterior(self, n: u8) -> MultiLocation {
 		MultiLocation { parents: n, interior: Junctions::X1(self) }
 	}

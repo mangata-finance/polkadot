@@ -30,10 +30,9 @@
 //! The versioning is achieved with the `api_version` attribute. It can be
 //! placed on:
 //! * trait declaration - represents the base version of the API.
-//! * method declaration (inside a trait declaration) - represents a versioned
-//!   method, which is not available in the base version.
-//! * trait implementation - represents which version of the API is being
-//!   implemented.
+//! * method declaration (inside a trait declaration) - represents a versioned method, which is not
+//!   available in the base version.
+//! * trait implementation - represents which version of the API is being implemented.
 //!
 //! Let's see a quick example:
 //!
@@ -90,10 +89,14 @@
 //! # How versioned methods are used for `ParachainHost`
 //!
 //! Let's introduce two types of `ParachainHost` API implementation:
-//! * stable - used on stable production networks like Polkadot and Kusama. There is only one
-//!   stable API at a single point in time.
-//! * staging - used on test networks like Westend or Rococo. Depending on the development needs
-//!   there can be zero, one or multiple staging APIs.
+//! * stable - used on stable production networks like Polkadot and Kusama. There is only one stable
+//!   API at a single point in time.
+//! * staging - methods that are ready for production, but will be released on Rococo first. We can
+//!   batch together multiple changes and then release all of them to production, by making staging
+//!   production (bump base version). We can not change or remove any method in staging after a
+//!   release, as this would break Rococo. It should be ok to keep adding methods to staging across
+//!   several releases. For experimental methods, you have to keep them on a separate branch until
+//!   ready.
 //!
 //! The stable version of `ParachainHost` is indicated by the base version of the API. Any staging
 //! method must use `api_version` attribute so that it is assigned to a specific version of a
@@ -107,14 +110,14 @@
 //! ```
 //! indicates a function from the stable `v2` API.
 //!
-//! All staging API functions should use primitives from `vstaging`. They should be clearly separated
-//! from the stable primitives.
+//! All staging API functions should use primitives from `vstaging`. They should be clearly
+//! separated from the stable primitives.
 
 use crate::{
-	BlockNumber, CandidateCommitments, CandidateEvent, CandidateHash, CommittedCandidateReceipt,
-	CoreState, DisputeState, ExecutorParams, GroupRotationInfo, OccupiedCoreAssumption,
-	PersistedValidationData, PvfCheckStatement, ScrapedOnChainVotes, SessionIndex, SessionInfo,
-	ValidatorId, ValidatorIndex, ValidatorSignature,
+	vstaging, BlockNumber, CandidateCommitments, CandidateEvent, CandidateHash,
+	CommittedCandidateReceipt, CoreState, DisputeState, ExecutorParams, GroupRotationInfo,
+	OccupiedCoreAssumption, PersistedValidationData, PvfCheckStatement, ScrapedOnChainVotes,
+	SessionIndex, SessionInfo, ValidatorId, ValidatorIndex, ValidatorSignature,
 };
 use parity_scale_codec::{Decode, Encode};
 use polkadot_core_primitives as pcp;
@@ -123,7 +126,7 @@ use sp_std::{collections::btree_map::BTreeMap, prelude::*};
 
 sp_api::decl_runtime_apis! {
 	/// The API for querying the state of parachains on-chain.
-	#[api_version(4)]
+	#[api_version(5)]
 	pub trait ParachainHost<H: Encode + Decode = pcp::v2::Hash, N: Encode + Decode = pcp::v2::BlockNumber> {
 		/// Get the current validators.
 		fn validators() -> Vec<ValidatorId>;
@@ -218,5 +221,34 @@ sp_api::decl_runtime_apis! {
 
 		/// Returns execution parameters for the session.
 		fn session_executor_params(session_index: SessionIndex) -> Option<ExecutorParams>;
+
+		/// Returns a list of validators that lost a past session dispute and need to be slashed.
+		/// NOTE: This function is only available since parachain host version 5.
+		fn unapplied_slashes() -> Vec<(SessionIndex, CandidateHash, vstaging::slashing::PendingSlashes)>;
+
+		/// Returns a merkle proof of a validator session key.
+		/// NOTE: This function is only available since parachain host version 5.
+		fn key_ownership_proof(
+			validator_id: ValidatorId,
+		) -> Option<vstaging::slashing::OpaqueKeyOwnershipProof>;
+
+		/// Submit an unsigned extrinsic to slash validators who lost a dispute about
+		/// a candidate of a past session.
+		/// NOTE: This function is only available since parachain host version 5.
+		fn submit_report_dispute_lost(
+			dispute_proof: vstaging::slashing::DisputeProof,
+			key_ownership_proof: vstaging::slashing::OpaqueKeyOwnershipProof,
+		) -> Option<()>;
+
+		/***** Asynchronous backing *****/
+
+		/// Returns the state of parachain backing for a given para.
+		/// This is a staging method! Do not use on production runtimes!
+		#[api_version(99)]
+		fn staging_para_backing_state(_: ppp::Id) -> Option<vstaging::BackingState<H, N>>;
+
+		/// Returns candidate's acceptance limitations for asynchronous backing for a relay parent.
+		#[api_version(99)]
+		fn staging_async_backing_params() -> vstaging::AsyncBackingParams;
 	}
 }

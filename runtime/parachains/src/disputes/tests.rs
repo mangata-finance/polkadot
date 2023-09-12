@@ -28,6 +28,7 @@ use frame_support::{
 	assert_err, assert_noop, assert_ok,
 	traits::{OnFinalize, OnInitialize},
 };
+use frame_system::pallet_prelude::BlockNumberFor;
 use primitives::BlockNumber;
 use sp_core::{crypto::CryptoType, Pair};
 
@@ -42,14 +43,39 @@ fn filter_dispute_set(stmts: MultiDisputeStatementSet) -> CheckedMultiDisputeSta
 	stmts
 		.into_iter()
 		.filter_map(|set| {
-			let filter = Pallet::<Test>::filter_dispute_data(
-				&set,
-				post_conclusion_acceptance_period,
-				VerifyDisputeSignatures::Skip,
-			);
+			let filter =
+				Pallet::<Test>::filter_dispute_data(&set, post_conclusion_acceptance_period);
 			filter.filter_statement_set(set)
 		})
 		.collect::<Vec<_>>()
+}
+
+/// Returns `true` if duplicate items were found, otherwise `false`.
+///
+/// `check_equal(a: &T, b: &T)` _must_ return `true`, iff `a` and `b` are equal, otherwise `false.
+/// The definition of _equal_ is to be defined by the user.
+///
+/// Attention: Requires the input `iter` to be sorted, such that _equals_
+/// would be adjacent in respect whatever `check_equal` defines as equality!
+fn contains_duplicates_in_sorted_iter<
+	'a,
+	T: 'a,
+	I: 'a + IntoIterator<Item = &'a T>,
+	C: 'static + FnMut(&T, &T) -> bool,
+>(
+	iter: I,
+	mut check_equal: C,
+) -> bool {
+	let mut iter = iter.into_iter();
+	if let Some(mut previous) = iter.next() {
+		while let Some(current) = iter.next() {
+			if check_equal(previous, current) {
+				return true
+			}
+			previous = current;
+		}
+	}
+	return false
 }
 
 // All arguments for `initializer::on_new_session`
@@ -126,11 +152,23 @@ fn test_dispute_state_flag_from_state() {
 	assert_eq!(
 		DisputeStateFlags::from_state(&DisputeState {
 			validators_for: bitvec![u8, BitOrderLsb0; 0, 0, 0, 0, 0, 0, 0],
+			validators_against: bitvec![u8, BitOrderLsb0; 1, 1, 1, 0, 0, 0, 0],
+			start: 0,
+			concluded_at: None,
+		}),
+		DisputeStateFlags::CONFIRMED | DisputeStateFlags::AGAINST_BYZANTINE,
+	);
+
+	assert_eq!(
+		DisputeStateFlags::from_state(&DisputeState {
+			validators_for: bitvec![u8, BitOrderLsb0; 0, 0, 0, 0, 0, 0, 0],
 			validators_against: bitvec![u8, BitOrderLsb0; 1, 1, 1, 1, 1, 0, 0],
 			start: 0,
 			concluded_at: None,
 		}),
-		DisputeStateFlags::AGAINST_SUPERMAJORITY | DisputeStateFlags::CONFIRMED,
+		DisputeStateFlags::AGAINST_SUPERMAJORITY |
+			DisputeStateFlags::CONFIRMED |
+			DisputeStateFlags::AGAINST_BYZANTINE,
 	);
 }
 
@@ -248,7 +286,9 @@ fn test_import_prev_participant_confirmed_slash_for() {
 	assert_eq!(summary.new_participants, bitvec![u8, BitOrderLsb0; 0, 0, 1, 1, 1, 1, 1, 0]);
 	assert_eq!(
 		summary.new_flags,
-		DisputeStateFlags::CONFIRMED | DisputeStateFlags::AGAINST_SUPERMAJORITY,
+		DisputeStateFlags::CONFIRMED |
+			DisputeStateFlags::AGAINST_SUPERMAJORITY |
+			DisputeStateFlags::AGAINST_BYZANTINE,
 	);
 }
 
@@ -337,7 +377,6 @@ fn test_initializer_on_new_session() {
 	let mock_genesis_config = MockGenesisConfig {
 		configuration: crate::configuration::GenesisConfig {
 			config: HostConfiguration { dispute_period, ..Default::default() },
-			..Default::default()
 		},
 		..Default::default()
 	};
@@ -346,13 +385,13 @@ fn test_initializer_on_new_session() {
 		let v0 = <ValidatorId as CryptoType>::Pair::generate().0;
 
 		let candidate_hash = CandidateHash(sp_core::H256::repeat_byte(1));
-		Pallet::<Test>::note_included(0, candidate_hash.clone(), 0);
-		Pallet::<Test>::note_included(1, candidate_hash.clone(), 1);
-		Pallet::<Test>::note_included(2, candidate_hash.clone(), 2);
-		Pallet::<Test>::note_included(3, candidate_hash.clone(), 3);
-		Pallet::<Test>::note_included(4, candidate_hash.clone(), 4);
-		Pallet::<Test>::note_included(5, candidate_hash.clone(), 5);
-		Pallet::<Test>::note_included(6, candidate_hash.clone(), 5);
+		Pallet::<Test>::note_included(0, candidate_hash, 0);
+		Pallet::<Test>::note_included(1, candidate_hash, 1);
+		Pallet::<Test>::note_included(2, candidate_hash, 2);
+		Pallet::<Test>::note_included(3, candidate_hash, 3);
+		Pallet::<Test>::note_included(4, candidate_hash, 4);
+		Pallet::<Test>::note_included(5, candidate_hash, 5);
+		Pallet::<Test>::note_included(6, candidate_hash, 5);
 
 		run_to_block(7, |b| {
 			// a new session at each block
@@ -425,7 +464,7 @@ fn test_provide_multi_dispute_is_providing() {
 		let inclusion_parent = sp_core::H256::repeat_byte(0xff);
 		let session = 1;
 		let stmts = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session,
 			statements: vec![
 				(
@@ -441,12 +480,8 @@ fn test_provide_multi_dispute_is_providing() {
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(1),
 					v1.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 			],
@@ -459,7 +494,7 @@ fn test_provide_multi_dispute_is_providing() {
 					.map(CheckedDisputeStatementSet::unchecked_from_unchecked)
 					.collect()
 			),
-			vec![(1, candidate_hash.clone())],
+			vec![(1, candidate_hash)],
 		);
 	})
 }
@@ -488,31 +523,23 @@ fn test_disputes_with_missing_backing_votes_are_rejected() {
 		let session = 1;
 
 		let stmts = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session,
 			statements: vec![
 				(
 					DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
 					ValidatorIndex(0),
 					v0.sign(
-						&ExplicitDisputeStatement {
-							valid: true,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: true, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(1),
 					v1.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 			],
@@ -550,31 +577,23 @@ fn test_freeze_on_note_included() {
 
 		// v0 votes for 3
 		let stmts = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session: 3,
 			statements: vec![
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(0),
 					v0.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session: 3,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session: 3 }
+							.signing_payload(),
 					),
 				),
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(1),
 					v1.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session: 3,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session: 3 }
+							.signing_payload(),
 					),
 				),
 				(
@@ -596,7 +615,7 @@ fn test_freeze_on_note_included() {
 		)
 		.is_ok());
 
-		Pallet::<Test>::note_included(3, candidate_hash.clone(), 3);
+		Pallet::<Test>::note_included(3, candidate_hash, 3);
 		assert_eq!(Frozen::<Test>::get(), Some(2));
 	});
 }
@@ -623,31 +642,23 @@ fn test_freeze_provided_against_supermajority_for_included() {
 
 		// v0 votes for 3
 		let stmts = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session,
 			statements: vec![
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(0),
 					v0.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(1),
 					v1.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 				(
@@ -662,7 +673,7 @@ fn test_freeze_provided_against_supermajority_for_included() {
 			],
 		}];
 
-		Pallet::<Test>::note_included(3, candidate_hash.clone(), 3);
+		Pallet::<Test>::note_included(3, candidate_hash, 3);
 		assert!(Pallet::<Test>::process_checked_multi_dispute_data(
 			&stmts
 				.into_iter()
@@ -674,12 +685,141 @@ fn test_freeze_provided_against_supermajority_for_included() {
 	});
 }
 
+#[test]
+fn test_freeze_provided_against_byzantine_threshold_for_included() {
+	new_test_ext(Default::default()).execute_with(|| {
+		let v0 = <ValidatorId as CryptoType>::Pair::generate().0;
+		let v1 = <ValidatorId as CryptoType>::Pair::generate().0;
+		let v2 = <ValidatorId as CryptoType>::Pair::generate().0;
+		let v3 = <ValidatorId as CryptoType>::Pair::generate().0;
+		let v4 = <ValidatorId as CryptoType>::Pair::generate().0;
+		let v5 = <ValidatorId as CryptoType>::Pair::generate().0;
+		let v6 = <ValidatorId as CryptoType>::Pair::generate().0;
+
+		let active_set = vec![
+			(&0, v0.public()),
+			(&1, v1.public()),
+			(&2, v2.public()),
+			(&3, v3.public()),
+			(&4, v4.public()),
+			(&5, v5.public()),
+			(&6, v6.public()),
+		];
+
+		run_to_block(6, |b| Some((true, b, active_set.clone(), Some(active_set.clone()))));
+
+		// A candidate which will be disputed
+		let candidate_hash = CandidateHash(sp_core::H256::repeat_byte(1));
+		let inclusion_parent = sp_core::H256::repeat_byte(0xff);
+		let session = 3;
+
+		// A byzantine threshold of INVALID
+		let stmts = vec![DisputeStatementSet {
+			candidate_hash,
+			session,
+			statements: vec![
+				(
+					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
+					ValidatorIndex(0),
+					v0.sign(
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
+					),
+				),
+				(
+					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
+					ValidatorIndex(1),
+					v1.sign(
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
+					),
+				),
+				(
+					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
+					ValidatorIndex(2),
+					v2.sign(
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
+					),
+				),
+				(
+					DisputeStatement::Valid(ValidDisputeStatementKind::BackingValid(
+						inclusion_parent,
+					)),
+					ValidatorIndex(1),
+					v0.sign(&CompactStatement::Valid(candidate_hash).signing_payload(
+						&SigningContext { session_index: session, parent_hash: inclusion_parent },
+					)),
+				),
+			],
+		}];
+
+		// Include the candidate and import the votes
+		Pallet::<Test>::note_included(3, candidate_hash, 3);
+		assert!(Pallet::<Test>::process_checked_multi_dispute_data(
+			&stmts
+				.into_iter()
+				.map(CheckedDisputeStatementSet::unchecked_from_unchecked)
+				.collect()
+		)
+		.is_ok());
+		// Successful import should freeze the chain
+		assert_eq!(Frozen::<Test>::get(), Some(2));
+
+		// Now include one more block
+		run_to_block(7, |b| Some((true, b, active_set.clone(), Some(active_set.clone()))));
+		Pallet::<Test>::note_included(3, CandidateHash(sp_core::H256::repeat_byte(2)), 3);
+
+		// And generate enough votes to reach supermajority of invalid votes
+		let stmts = vec![DisputeStatementSet {
+			candidate_hash,
+			session,
+			statements: vec![
+				(
+					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
+					ValidatorIndex(3),
+					v3.sign(
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
+					),
+				),
+				(
+					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
+					ValidatorIndex(4),
+					v4.sign(
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
+					),
+				),
+				(
+					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
+					ValidatorIndex(5),
+					v5.sign(
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
+					),
+				),
+			],
+		}];
+		assert!(Pallet::<Test>::process_checked_multi_dispute_data(
+			&stmts
+				.into_iter()
+				.map(CheckedDisputeStatementSet::unchecked_from_unchecked)
+				.collect()
+		)
+		.is_ok());
+		// Chain should still be frozen
+		assert_eq!(Frozen::<Test>::get(), Some(2));
+	});
+}
+
 mod unconfirmed_disputes {
 	use super::*;
 	use assert_matches::assert_matches;
 	use sp_runtime::ModuleError;
 
-	// Shared initialization code between `test_unconfirmed_are_ignored` and `test_unconfirmed_disputes_cause_block_import_error`
+	// Shared initialization code between `test_unconfirmed_are_ignored` and
+	// `test_unconfirmed_disputes_cause_block_import_error`
 	fn generate_dispute_statement_set_and_run_to_block() -> DisputeStatementSet {
 		// 7 validators needed for byzantine threshold of 2.
 		let v0 = <ValidatorId as CryptoType>::Pair::generate().0;
@@ -729,31 +869,23 @@ mod unconfirmed_disputes {
 
 		// v0 votes for 4, v1 votes against 4.
 		DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session: 4,
 			statements: vec![
 				(
 					DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
 					ValidatorIndex(0),
 					v0.sign(
-						&ExplicitDisputeStatement {
-							valid: true,
-							candidate_hash: candidate_hash.clone(),
-							session: 4,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: true, candidate_hash, session: 4 }
+							.signing_payload(),
 					),
 				),
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(3),
 					v1.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session: 4,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session: 4 }
+							.signing_payload(),
 					),
 				),
 			],
@@ -844,7 +976,7 @@ fn test_provide_multi_dispute_success_and_other() {
 
 		// v0 and v1 vote for 3, v6 votes against
 		let stmts = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session,
 			statements: vec![
 				(
@@ -860,24 +992,16 @@ fn test_provide_multi_dispute_success_and_other() {
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(2),
 					v6.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 				(
 					DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
 					ValidatorIndex(3),
 					v1.sign(
-						&ExplicitDisputeStatement {
-							valid: true,
-							candidate_hash: candidate_hash.clone(),
-							session: 3,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: true, candidate_hash, session: 3 }
+							.signing_payload(),
 					),
 				),
 			],
@@ -887,29 +1011,25 @@ fn test_provide_multi_dispute_success_and_other() {
 
 		assert_ok!(
 			Pallet::<Test>::process_checked_multi_dispute_data(&stmts),
-			vec![(3, candidate_hash.clone())],
+			vec![(3, candidate_hash)],
 		);
 
 		// v3 votes against 3 and for 5, v2 and v6 vote against 5.
 		let stmts = vec![
 			DisputeStatementSet {
-				candidate_hash: candidate_hash.clone(),
+				candidate_hash,
 				session: 3,
 				statements: vec![(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(5),
 					v3.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session: 3,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session: 3 }
+							.signing_payload(),
 					),
 				)],
 			},
 			DisputeStatementSet {
-				candidate_hash: candidate_hash.clone(),
+				candidate_hash,
 				session: 5,
 				statements: vec![
 					(
@@ -925,24 +1045,16 @@ fn test_provide_multi_dispute_success_and_other() {
 						DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 						ValidatorIndex(6),
 						v2.sign(
-							&ExplicitDisputeStatement {
-								valid: false,
-								candidate_hash: candidate_hash.clone(),
-								session: 5,
-							}
-							.signing_payload(),
+							&ExplicitDisputeStatement { valid: false, candidate_hash, session: 5 }
+								.signing_payload(),
 						),
 					),
 					(
 						DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 						ValidatorIndex(2),
 						v6.sign(
-							&ExplicitDisputeStatement {
-								valid: false,
-								candidate_hash: candidate_hash.clone(),
-								session: 5,
-							}
-							.signing_payload(),
+							&ExplicitDisputeStatement { valid: false, candidate_hash, session: 5 }
+								.signing_payload(),
 						),
 					),
 				],
@@ -952,23 +1064,19 @@ fn test_provide_multi_dispute_success_and_other() {
 		let stmts = filter_dispute_set(stmts);
 		assert_ok!(
 			Pallet::<Test>::process_checked_multi_dispute_data(&stmts),
-			vec![(5, candidate_hash.clone())],
+			vec![(5, candidate_hash)],
 		);
 
 		// v2 votes for 3
 		let stmts = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session: 3,
 			statements: vec![(
 				DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
 				ValidatorIndex(6),
 				v2.sign(
-					&ExplicitDisputeStatement {
-						valid: true,
-						candidate_hash: candidate_hash.clone(),
-						session: 3,
-					}
-					.signing_payload(),
+					&ExplicitDisputeStatement { valid: true, candidate_hash, session: 3 }
+						.signing_payload(),
 				),
 			)],
 		}];
@@ -978,74 +1086,54 @@ fn test_provide_multi_dispute_success_and_other() {
 		let stmts = vec![
 			// 0, 4, and 5 vote against 5
 			DisputeStatementSet {
-				candidate_hash: candidate_hash.clone(),
+				candidate_hash,
 				session: 5,
 				statements: vec![
 					(
 						DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 						ValidatorIndex(0),
 						v0.sign(
-							&ExplicitDisputeStatement {
-								valid: false,
-								candidate_hash: candidate_hash.clone(),
-								session: 5,
-							}
-							.signing_payload(),
+							&ExplicitDisputeStatement { valid: false, candidate_hash, session: 5 }
+								.signing_payload(),
 						),
 					),
 					(
 						DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 						ValidatorIndex(1),
 						v4.sign(
-							&ExplicitDisputeStatement {
-								valid: false,
-								candidate_hash: candidate_hash.clone(),
-								session: 5,
-							}
-							.signing_payload(),
+							&ExplicitDisputeStatement { valid: false, candidate_hash, session: 5 }
+								.signing_payload(),
 						),
 					),
 					(
 						DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 						ValidatorIndex(4),
 						v5.sign(
-							&ExplicitDisputeStatement {
-								valid: false,
-								candidate_hash: candidate_hash.clone(),
-								session: 5,
-							}
-							.signing_payload(),
+							&ExplicitDisputeStatement { valid: false, candidate_hash, session: 5 }
+								.signing_payload(),
 						),
 					),
 				],
 			},
 			// 4 and 5 vote for 3
 			DisputeStatementSet {
-				candidate_hash: candidate_hash.clone(),
+				candidate_hash,
 				session: 3,
 				statements: vec![
 					(
 						DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
 						ValidatorIndex(1),
 						v4.sign(
-							&ExplicitDisputeStatement {
-								valid: true,
-								candidate_hash: candidate_hash.clone(),
-								session: 3,
-							}
-							.signing_payload(),
+							&ExplicitDisputeStatement { valid: true, candidate_hash, session: 3 }
+								.signing_payload(),
 						),
 					),
 					(
 						DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
 						ValidatorIndex(4),
 						v5.sign(
-							&ExplicitDisputeStatement {
-								valid: true,
-								candidate_hash: candidate_hash.clone(),
-								session: 3,
-							}
-							.signing_payload(),
+							&ExplicitDisputeStatement { valid: true, candidate_hash, session: 3 }
+								.signing_payload(),
 						),
 					),
 				],
@@ -1059,7 +1147,7 @@ fn test_provide_multi_dispute_success_and_other() {
 			vec![
 				(
 					5,
-					candidate_hash.clone(),
+					candidate_hash,
 					DisputeState {
 						validators_for: bitvec![u8, BitOrderLsb0; 0, 0, 0, 0, 0, 1, 0],
 						validators_against: bitvec![u8, BitOrderLsb0; 1, 1, 1, 0, 1, 0, 1],
@@ -1069,7 +1157,7 @@ fn test_provide_multi_dispute_success_and_other() {
 				),
 				(
 					3,
-					candidate_hash.clone(),
+					candidate_hash,
 					DisputeState {
 						validators_for: bitvec![u8, BitOrderLsb0; 1, 1, 0, 1, 1, 0, 1],
 						validators_against: bitvec![u8, BitOrderLsb0; 0, 0, 1, 0, 0, 1, 0],
@@ -1080,9 +1168,9 @@ fn test_provide_multi_dispute_success_and_other() {
 			]
 		);
 
-		assert!(!Pallet::<Test>::concluded_invalid(3, candidate_hash.clone()));
-		assert!(!Pallet::<Test>::concluded_invalid(4, candidate_hash.clone()));
-		assert!(Pallet::<Test>::concluded_invalid(5, candidate_hash.clone()));
+		assert!(!Pallet::<Test>::concluded_invalid(3, candidate_hash));
+		assert!(!Pallet::<Test>::concluded_invalid(4, candidate_hash));
+		assert!(Pallet::<Test>::concluded_invalid(5, candidate_hash));
 
 		// Ensure the `reward_validator` function was correctly called
 		assert_eq!(
@@ -1179,7 +1267,7 @@ fn test_punish_post_conclusion() {
 		let session = 3;
 
 		let stmts = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session,
 			statements: vec![
 				(
@@ -1195,60 +1283,40 @@ fn test_punish_post_conclusion() {
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(1),
 					v4.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(2),
 					v6.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(6),
 					v2.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(4),
 					v5.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 				(
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(5),
 					v3.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 				(
@@ -1276,7 +1344,7 @@ fn test_punish_post_conclusion() {
 
 		// someone reveals 3 backing vote, 6 votes against
 		let stmts = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session,
 			statements: vec![
 				(
@@ -1292,12 +1360,8 @@ fn test_punish_post_conclusion() {
 					DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
 					ValidatorIndex(6),
 					v2.sign(
-						&ExplicitDisputeStatement {
-							valid: false,
-							candidate_hash: candidate_hash.clone(),
-							session,
-						}
-						.signing_payload(),
+						&ExplicitDisputeStatement { valid: false, candidate_hash, session }
+							.signing_payload(),
 					),
 				),
 			],
@@ -1407,37 +1471,28 @@ fn test_check_signature() {
 	let wrong_inclusion_parent = sp_core::H256::repeat_byte(4);
 
 	let statement_1 = DisputeStatement::Valid(ValidDisputeStatementKind::Explicit);
-	let statement_2 = DisputeStatement::Valid(ValidDisputeStatementKind::BackingSeconded(
-		inclusion_parent.clone(),
-	));
-	let wrong_statement_2 = DisputeStatement::Valid(ValidDisputeStatementKind::BackingSeconded(
-		wrong_inclusion_parent.clone(),
-	));
+	let statement_2 =
+		DisputeStatement::Valid(ValidDisputeStatementKind::BackingSeconded(inclusion_parent));
+	let wrong_statement_2 =
+		DisputeStatement::Valid(ValidDisputeStatementKind::BackingSeconded(wrong_inclusion_parent));
 	let statement_3 =
-		DisputeStatement::Valid(ValidDisputeStatementKind::BackingValid(inclusion_parent.clone()));
-	let wrong_statement_3 = DisputeStatement::Valid(ValidDisputeStatementKind::BackingValid(
-		wrong_inclusion_parent.clone(),
-	));
+		DisputeStatement::Valid(ValidDisputeStatementKind::BackingValid(inclusion_parent));
+	let wrong_statement_3 =
+		DisputeStatement::Valid(ValidDisputeStatementKind::BackingValid(wrong_inclusion_parent));
 	let statement_4 = DisputeStatement::Valid(ValidDisputeStatementKind::ApprovalChecking);
 	let statement_5 = DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit);
 
-	let signed_1 = validator_id.sign(
-		&ExplicitDisputeStatement { valid: true, candidate_hash: candidate_hash.clone(), session }
-			.signing_payload(),
-	);
-	let signed_2 =
-		validator_id.sign(&CompactStatement::Seconded(candidate_hash.clone()).signing_payload(
-			&SigningContext { session_index: session, parent_hash: inclusion_parent.clone() },
-		));
-	let signed_3 =
-		validator_id.sign(&CompactStatement::Valid(candidate_hash.clone()).signing_payload(
-			&SigningContext { session_index: session, parent_hash: inclusion_parent.clone() },
-		));
-	let signed_4 =
-		validator_id.sign(&ApprovalVote(candidate_hash.clone()).signing_payload(session));
+	let signed_1 = validator_id
+		.sign(&ExplicitDisputeStatement { valid: true, candidate_hash, session }.signing_payload());
+	let signed_2 = validator_id.sign(&CompactStatement::Seconded(candidate_hash).signing_payload(
+		&SigningContext { session_index: session, parent_hash: inclusion_parent },
+	));
+	let signed_3 = validator_id.sign(&CompactStatement::Valid(candidate_hash).signing_payload(
+		&SigningContext { session_index: session, parent_hash: inclusion_parent },
+	));
+	let signed_4 = validator_id.sign(&ApprovalVote(candidate_hash).signing_payload(session));
 	let signed_5 = validator_id.sign(
-		&ExplicitDisputeStatement { valid: false, candidate_hash: candidate_hash.clone(), session }
-			.signing_payload(),
+		&ExplicitDisputeStatement { valid: false, candidate_hash, session }.signing_payload(),
 	);
 
 	assert!(check_signature(
@@ -1814,9 +1869,8 @@ fn deduplication_and_sorting_works() {
 		                                 c_hash: &CandidateHash,
 		                                 valid,
 		                                 session| {
-			let payload =
-				ExplicitDisputeStatement { valid, candidate_hash: c_hash.clone(), session }
-					.signing_payload();
+			let payload = ExplicitDisputeStatement { valid, candidate_hash: *c_hash, session }
+				.signing_payload();
 			let sig = validator.sign(&payload);
 			(DisputeStatement::Valid(ValidDisputeStatementKind::Explicit), vidx, sig.clone())
 		};
@@ -1838,24 +1892,24 @@ fn deduplication_and_sorting_works() {
 
 		let mut disputes = vec![
 			DisputeStatementSet {
-				candidate_hash: candidate_hash_b.clone(),
+				candidate_hash: candidate_hash_b,
 				session: 2,
 				statements: vec![explicit_triple_b.clone(), explicit_triple_b_bad.clone()],
 			},
 			// same session as above
 			DisputeStatementSet {
-				candidate_hash: candidate_hash_c.clone(),
+				candidate_hash: candidate_hash_c,
 				session: 2,
 				statements: vec![explicit_triple_c, explicit_triple_c_bad],
 			},
 			// the duplicate set
 			DisputeStatementSet {
-				candidate_hash: candidate_hash_b.clone(),
+				candidate_hash: candidate_hash_b,
 				session: 2,
 				statements: vec![explicit_triple_b.clone(), explicit_triple_b_bad.clone()],
 			},
 			DisputeStatementSet {
-				candidate_hash: candidate_hash_a.clone(),
+				candidate_hash: candidate_hash_a,
 				session: 1,
 				statements: vec![explicit_triple_a, explicit_triple_a_bad],
 			},
@@ -1863,11 +1917,13 @@ fn deduplication_and_sorting_works() {
 
 		let disputes_orig = disputes.clone();
 
-		<Pallet<Test> as DisputesHandler<
-				<Test as frame_system::Config>::BlockNumber,
-			>>::deduplicate_and_sort_dispute_data(&mut disputes).unwrap_err();
+		<Pallet<Test> as DisputesHandler<BlockNumberFor<Test>>>::deduplicate_and_sort_dispute_data(
+			&mut disputes,
+		)
+		.unwrap_err();
 
-		// assert ordering of local only disputes, and at the same time, and being free of duplicates
+		// assert ordering of local only disputes, and at the same time, and being free of
+		// duplicates
 		assert_eq!(disputes_orig.len(), disputes.len() + 1);
 
 		let are_these_equal = |a: &DisputeStatementSet, b: &DisputeStatementSet| {
@@ -1892,11 +1948,11 @@ fn apply_filter_all<T: Config, I: IntoIterator<Item = DisputeStatementSet>>(
 
 	let mut acc = Vec::<CheckedDisputeStatementSet>::new();
 	for dispute_statement in sets {
-		if let Some(checked) = <Pallet<T> as DisputesHandler<<T>::BlockNumber>>::filter_dispute_data(
-			dispute_statement,
-			post_conclusion_acceptance_period,
-			VerifyDisputeSignatures::Yes,
-		) {
+		if let Some(checked) =
+			<Pallet<T> as DisputesHandler<BlockNumberFor<T>>>::filter_dispute_data(
+				dispute_statement,
+				post_conclusion_acceptance_period,
+			) {
 			acc.push(checked);
 		}
 	}
@@ -1921,19 +1977,11 @@ fn filter_removes_duplicates_within_set() {
 
 		let candidate_hash = CandidateHash(sp_core::H256::repeat_byte(1));
 
-		let payload = ExplicitDisputeStatement {
-			valid: true,
-			candidate_hash: candidate_hash.clone(),
-			session: 1,
-		}
-		.signing_payload();
+		let payload =
+			ExplicitDisputeStatement { valid: true, candidate_hash, session: 1 }.signing_payload();
 
-		let payload_against = ExplicitDisputeStatement {
-			valid: false,
-			candidate_hash: candidate_hash.clone(),
-			session: 1,
-		}
-		.signing_payload();
+		let payload_against =
+			ExplicitDisputeStatement { valid: false, candidate_hash, session: 1 }.signing_payload();
 
 		let sig_a = v0.sign(&payload);
 		let sig_b = v0.sign(&payload);
@@ -1941,7 +1989,7 @@ fn filter_removes_duplicates_within_set() {
 		let sig_d = v1.sign(&payload_against);
 
 		let statements = DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session: 1,
 			statements: vec![
 				(
@@ -1968,18 +2016,16 @@ fn filter_removes_duplicates_within_set() {
 		};
 
 		let post_conclusion_acceptance_period = 10;
-		let statements = <Pallet<Test> as DisputesHandler<
-			<Test as frame_system::Config>::BlockNumber,
-		>>::filter_dispute_data(
-			statements,
-			post_conclusion_acceptance_period,
-			VerifyDisputeSignatures::Yes,
-		);
+		let statements =
+			<Pallet<Test> as DisputesHandler<BlockNumberFor<Test>>>::filter_dispute_data(
+				statements,
+				post_conclusion_acceptance_period,
+			);
 
 		assert_eq!(
 			statements,
 			Some(CheckedDisputeStatementSet::unchecked_from_unchecked(DisputeStatementSet {
-				candidate_hash: candidate_hash.clone(),
+				candidate_hash,
 				session: 1,
 				statements: vec![
 					(
@@ -2024,7 +2070,7 @@ fn filter_bad_signatures_correctly_detects_single_sided() {
 		let candidate_hash_a = CandidateHash(sp_core::H256::repeat_byte(1));
 
 		let payload = |c_hash: &CandidateHash, valid| {
-			ExplicitDisputeStatement { valid, candidate_hash: c_hash.clone(), session: 1 }
+			ExplicitDisputeStatement { valid, candidate_hash: *c_hash, session: 1 }
 				.signing_payload()
 		};
 
@@ -2035,7 +2081,7 @@ fn filter_bad_signatures_correctly_detects_single_sided() {
 		let sig_1 = v1.sign(&payload_a_bad);
 
 		let statements = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash_a.clone(),
+			candidate_hash: candidate_hash_a,
 			session: 1,
 			statements: vec![
 				(
@@ -2069,17 +2115,13 @@ fn filter_removes_session_out_of_bounds() {
 
 		let candidate_hash = CandidateHash(sp_core::H256::repeat_byte(1));
 
-		let payload = ExplicitDisputeStatement {
-			valid: true,
-			candidate_hash: candidate_hash.clone(),
-			session: 1,
-		}
-		.signing_payload();
+		let payload =
+			ExplicitDisputeStatement { valid: true, candidate_hash, session: 1 }.signing_payload();
 
 		let sig_a = v0.sign(&payload);
 
 		let statements = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash.clone(),
+			candidate_hash,
 			session: 100,
 			statements: vec![(
 				DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
@@ -2104,7 +2146,6 @@ fn filter_removes_concluded_ancient() {
 				dispute_post_conclusion_acceptance_period,
 				..Default::default()
 			},
-			..Default::default()
 		},
 		..Default::default()
 	};
@@ -2142,26 +2183,20 @@ fn filter_removes_concluded_ancient() {
 			},
 		);
 
-		let payload_a = ExplicitDisputeStatement {
-			valid: true,
-			candidate_hash: candidate_hash_a.clone(),
-			session: 1,
-		}
-		.signing_payload();
+		let payload_a =
+			ExplicitDisputeStatement { valid: true, candidate_hash: candidate_hash_a, session: 1 }
+				.signing_payload();
 
-		let payload_b = ExplicitDisputeStatement {
-			valid: true,
-			candidate_hash: candidate_hash_b.clone(),
-			session: 1,
-		}
-		.signing_payload();
+		let payload_b =
+			ExplicitDisputeStatement { valid: true, candidate_hash: candidate_hash_b, session: 1 }
+				.signing_payload();
 
 		let sig_a = v0.sign(&payload_a);
 		let sig_b = v0.sign(&payload_b);
 
 		let statements = vec![
 			DisputeStatementSet {
-				candidate_hash: candidate_hash_a.clone(),
+				candidate_hash: candidate_hash_a,
 				session: 1,
 				statements: vec![(
 					DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
@@ -2170,7 +2205,7 @@ fn filter_removes_concluded_ancient() {
 				)],
 			},
 			DisputeStatementSet {
-				candidate_hash: candidate_hash_b.clone(),
+				candidate_hash: candidate_hash_b,
 				session: 1,
 				statements: vec![(
 					DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
@@ -2185,7 +2220,7 @@ fn filter_removes_concluded_ancient() {
 		assert_eq!(
 			statements,
 			vec![CheckedDisputeStatementSet::unchecked_from_unchecked(DisputeStatementSet {
-				candidate_hash: candidate_hash_b.clone(),
+				candidate_hash: candidate_hash_b,
 				session: 1,
 				statements: vec![(
 					DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
@@ -2215,19 +2250,13 @@ fn filter_removes_duplicate_statements_sets() {
 
 		let candidate_hash_a = CandidateHash(sp_core::H256::repeat_byte(1));
 
-		let payload = ExplicitDisputeStatement {
-			valid: true,
-			candidate_hash: candidate_hash_a.clone(),
-			session: 1,
-		}
-		.signing_payload();
+		let payload =
+			ExplicitDisputeStatement { valid: true, candidate_hash: candidate_hash_a, session: 1 }
+				.signing_payload();
 
-		let payload_against = ExplicitDisputeStatement {
-			valid: false,
-			candidate_hash: candidate_hash_a.clone(),
-			session: 1,
-		}
-		.signing_payload();
+		let payload_against =
+			ExplicitDisputeStatement { valid: false, candidate_hash: candidate_hash_a, session: 1 }
+				.signing_payload();
 
 		let sig_a = v0.sign(&payload);
 		let sig_a_against = v1.sign(&payload_against);
@@ -2247,12 +2276,12 @@ fn filter_removes_duplicate_statements_sets() {
 
 		let mut sets = vec![
 			DisputeStatementSet {
-				candidate_hash: candidate_hash_a.clone(),
+				candidate_hash: candidate_hash_a,
 				session: 1,
 				statements: statements.clone(),
 			},
 			DisputeStatementSet {
-				candidate_hash: candidate_hash_a.clone(),
+				candidate_hash: candidate_hash_a,
 				session: 1,
 				statements: statements.clone(),
 			},
@@ -2260,156 +2289,14 @@ fn filter_removes_duplicate_statements_sets() {
 
 		// `Err(())` indicates presence of duplicates
 		assert!(<Pallet::<Test> as DisputesHandler<
-			<Test as frame_system::Config>::BlockNumber,
+			BlockNumberFor<Test>,
 		>>::deduplicate_and_sort_dispute_data(&mut sets)
 		.is_err());
 
 		assert_eq!(
 			sets,
-			vec![DisputeStatementSet {
-				candidate_hash: candidate_hash_a.clone(),
-				session: 1,
-				statements,
-			}]
+			vec![DisputeStatementSet { candidate_hash: candidate_hash_a, session: 1, statements }]
 		);
-	})
-}
-
-#[test]
-fn assure_no_duplicate_statements_sets_are_fine() {
-	new_test_ext(Default::default()).execute_with(|| {
-		let v0 = <ValidatorId as CryptoType>::Pair::generate().0;
-		let v1 = <ValidatorId as CryptoType>::Pair::generate().0;
-
-		run_to_block(3, |b| {
-			// a new session at each block
-			Some((
-				true,
-				b,
-				vec![(&0, v0.public()), (&1, v1.public())],
-				Some(vec![(&0, v0.public()), (&1, v1.public())]),
-			))
-		});
-
-		let candidate_hash_a = CandidateHash(sp_core::H256::repeat_byte(1));
-
-		let payload = ExplicitDisputeStatement {
-			valid: true,
-			candidate_hash: candidate_hash_a.clone(),
-			session: 1,
-		}
-		.signing_payload();
-
-		let payload_against = ExplicitDisputeStatement {
-			valid: false,
-			candidate_hash: candidate_hash_a.clone(),
-			session: 1,
-		}
-		.signing_payload();
-
-		let sig_a = v0.sign(&payload);
-		let sig_a_against = v1.sign(&payload_against);
-
-		let statements = vec![
-			(
-				DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
-				ValidatorIndex(0),
-				sig_a.clone(),
-			),
-			(
-				DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
-				ValidatorIndex(1),
-				sig_a_against.clone(),
-			),
-		];
-
-		let sets = vec![
-			DisputeStatementSet {
-				candidate_hash: candidate_hash_a.clone(),
-				session: 1,
-				statements: statements.clone(),
-			},
-			DisputeStatementSet {
-				candidate_hash: candidate_hash_a.clone(),
-				session: 2,
-				statements: statements.clone(),
-			},
-		];
-
-		// `Err(())` indicates presence of duplicates
-		assert!(<Pallet::<Test> as DisputesHandler<
-			<Test as frame_system::Config>::BlockNumber,
-		>>::assure_deduplicated_and_sorted(&sets)
-		.is_ok());
-	})
-}
-
-#[test]
-fn assure_detects_duplicate_statements_sets() {
-	new_test_ext(Default::default()).execute_with(|| {
-		let v0 = <ValidatorId as CryptoType>::Pair::generate().0;
-		let v1 = <ValidatorId as CryptoType>::Pair::generate().0;
-
-		run_to_block(3, |b| {
-			// a new session at each block
-			Some((
-				true,
-				b,
-				vec![(&0, v0.public()), (&1, v1.public())],
-				Some(vec![(&0, v0.public()), (&1, v1.public())]),
-			))
-		});
-
-		let candidate_hash_a = CandidateHash(sp_core::H256::repeat_byte(1));
-
-		let payload = ExplicitDisputeStatement {
-			valid: true,
-			candidate_hash: candidate_hash_a.clone(),
-			session: 1,
-		}
-		.signing_payload();
-
-		let payload_against = ExplicitDisputeStatement {
-			valid: false,
-			candidate_hash: candidate_hash_a.clone(),
-			session: 1,
-		}
-		.signing_payload();
-
-		let sig_a = v0.sign(&payload);
-		let sig_a_against = v1.sign(&payload_against);
-
-		let statements = vec![
-			(
-				DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
-				ValidatorIndex(0),
-				sig_a.clone(),
-			),
-			(
-				DisputeStatement::Invalid(InvalidDisputeStatementKind::Explicit),
-				ValidatorIndex(1),
-				sig_a_against.clone(),
-			),
-		];
-
-		let sets = vec![
-			DisputeStatementSet {
-				candidate_hash: candidate_hash_a.clone(),
-				session: 1,
-				statements: statements.clone(),
-			},
-			DisputeStatementSet {
-				candidate_hash: candidate_hash_a.clone(),
-				session: 1,
-				statements: statements.clone(),
-			},
-		];
-
-		// `Err(())` indicates presence of duplicates
-		assert!(<Pallet::<Test> as DisputesHandler<
-			<Test as frame_system::Config>::BlockNumber,
-		>>::assure_deduplicated_and_sorted(&sets)
-		.is_err());
 	})
 }
 
@@ -2425,17 +2312,14 @@ fn filter_ignores_single_sided() {
 
 		let candidate_hash_a = CandidateHash(sp_core::H256::repeat_byte(1));
 
-		let payload = ExplicitDisputeStatement {
-			valid: true,
-			candidate_hash: candidate_hash_a.clone(),
-			session: 1,
-		}
-		.signing_payload();
+		let payload =
+			ExplicitDisputeStatement { valid: true, candidate_hash: candidate_hash_a, session: 1 }
+				.signing_payload();
 
 		let sig_a = v0.sign(&payload);
 
 		let statements = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash_a.clone(),
+			candidate_hash: candidate_hash_a,
 			session: 1,
 			statements: vec![(
 				DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),
@@ -2462,17 +2346,14 @@ fn import_ignores_single_sided() {
 
 		let candidate_hash_a = CandidateHash(sp_core::H256::repeat_byte(1));
 
-		let payload = ExplicitDisputeStatement {
-			valid: true,
-			candidate_hash: candidate_hash_a.clone(),
-			session: 1,
-		}
-		.signing_payload();
+		let payload =
+			ExplicitDisputeStatement { valid: true, candidate_hash: candidate_hash_a, session: 1 }
+				.signing_payload();
 
 		let sig_a = v0.sign(&payload);
 
 		let statements = vec![DisputeStatementSet {
-			candidate_hash: candidate_hash_a.clone(),
+			candidate_hash: candidate_hash_a,
 			session: 1,
 			statements: vec![(
 				DisputeStatement::Valid(ValidDisputeStatementKind::Explicit),

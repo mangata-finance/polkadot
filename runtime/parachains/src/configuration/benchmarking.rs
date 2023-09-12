@@ -27,8 +27,6 @@ benchmarks! {
 
 	set_config_with_option_u32 {}: set_max_validators(RawOrigin::Root, Some(10))
 
-	set_config_with_weight {}: set_ump_service_total_weight(RawOrigin::Root, Weight::from_parts(3_000_000, 0))
-
 	set_hrmp_open_request_ttl {}: {
 		Err(BenchmarkError::Override(
 			BenchmarkResult::from_weight(T::BlockWeights::get().max_block)
@@ -48,6 +46,8 @@ benchmarks! {
 		ExecutorParam::PvfExecTimeout(PvfExecTimeoutKind::Backing, 2_000),
 		ExecutorParam::PvfExecTimeout(PvfExecTimeoutKind::Approval, 12_000),
 	][..]))
+
+	set_config_with_perbill {}: set_on_demand_fee_variability(RawOrigin::Root, Perbill::from_percent(100))
 
 	impl_benchmark_test_suite!(
 		Pallet,

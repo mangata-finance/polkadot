@@ -14,13 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
+//! Mock implementations to test XCM builder configuration types.
+
 use crate::{
-	barriers::{AllowSubscriptionsFrom, RespectSuspension},
+	barriers::{AllowSubscriptionsFrom, RespectSuspension, TrailingSetTopicAsId},
 	test_utils::*,
 };
 pub use crate::{
-	AllowExplicitUnpaidExecutionFrom, AllowKnownQueryResponses, AllowTopLevelPaidExecutionFrom,
-	AllowUnpaidExecutionFrom, FixedRateOfFungible, FixedWeightBounds, TakeWeightCredit,
+	AliasForeignAccountId32, AllowExplicitUnpaidExecutionFrom, AllowKnownQueryResponses,
+	AllowTopLevelPaidExecutionFrom, AllowUnpaidExecutionFrom, FixedRateOfFungible,
+	FixedWeightBounds, TakeWeightCredit,
 };
 use frame_support::traits::{ContainsPair, Everything};
 pub use frame_support::{
@@ -28,9 +31,9 @@ pub use frame_support::{
 		DispatchError, DispatchInfo, DispatchResultWithPostInfo, Dispatchable, GetDispatchInfo,
 		Parameter, PostDispatchInfo,
 	},
-	ensure, parameter_types,
+	ensure, match_types, parameter_types,
 	sp_runtime::DispatchErrorWithPostInfo,
-	traits::{Contains, Get, IsInVec},
+	traits::{ConstU32, Contains, Get, IsInVec},
 };
 pub use parity_scale_codec::{Decode, Encode};
 pub use sp_io::hashing::blake2_256;
@@ -41,6 +44,7 @@ pub use sp_std::{
 	marker::PhantomData,
 };
 pub use xcm::latest::{prelude::*, Weight};
+use xcm_executor::traits::{Properties, QueryHandler, QueryResponseStatus};
 pub use xcm_executor::{
 	traits::{
 		AssetExchange, AssetLock, CheckSuspension, ConvertOrigin, Enact, ExportXcm, FeeManager,
@@ -58,8 +62,8 @@ pub enum TestOrigin {
 
 /// A dummy call.
 ///
-/// Each item contains the amount of weight that it *wants* to consume as the first item, and the actual amount (if
-/// different from the former) in the second option.
+/// Each item contains the amount of weight that it *wants* to consume as the first item, and the
+/// actual amount (if different from the former) in the second option.
 #[derive(Debug, Encode, Decode, Eq, PartialEq, Clone, Copy, scale_info::TypeInfo)]
 pub enum TestCall {
 	OnlyRoot(Weight, Option<Weight>),
@@ -241,6 +245,9 @@ pub fn asset_list(who: impl Into<MultiLocation>) -> Vec<MultiAsset> {
 pub fn add_asset(who: impl Into<MultiLocation>, what: impl Into<MultiAsset>) {
 	ASSETS.with(|a| a.borrow_mut().entry(who.into()).or_insert(Assets::new()).subsume(what.into()));
 }
+pub fn clear_assets(who: impl Into<MultiLocation>) {
+	ASSETS.with(|a| a.borrow_mut().remove(&who.into()));
+}
 
 pub struct TestAssetTransactor;
 impl TransactAsset for TestAssetTransactor {
@@ -249,7 +256,7 @@ impl TransactAsset for TestAssetTransactor {
 		who: &MultiLocation,
 		_context: &XcmContext,
 	) -> Result<(), XcmError> {
-		add_asset(who.clone(), what.clone());
+		add_asset(*who, what.clone());
 		Ok(())
 	}
 
@@ -405,6 +412,63 @@ pub fn response(query_id: u64) -> Option<Response> {
 	})
 }
 
+/// Mock implementation of the [`QueryHandler`] trait for creating XCM success queries and expecting
+/// responses.
+pub struct TestQueryHandler<T, BlockNumber>(core::marker::PhantomData<(T, BlockNumber)>);
+impl<T: Config, BlockNumber: sp_runtime::traits::Zero> QueryHandler
+	for TestQueryHandler<T, BlockNumber>
+{
+	type QueryId = u64;
+	type BlockNumber = BlockNumber;
+	type Error = XcmError;
+	type UniversalLocation = T::UniversalLocation;
+
+	fn new_query(
+		responder: impl Into<MultiLocation>,
+		_timeout: Self::BlockNumber,
+		_match_querier: impl Into<MultiLocation>,
+	) -> Self::QueryId {
+		let query_id = 1;
+		expect_response(query_id, responder.into());
+		query_id
+	}
+
+	fn report_outcome(
+		message: &mut Xcm<()>,
+		responder: impl Into<MultiLocation>,
+		timeout: Self::BlockNumber,
+	) -> Result<Self::QueryId, Self::Error> {
+		let responder = responder.into();
+		let destination = Self::UniversalLocation::get()
+			.invert_target(&responder)
+			.map_err(|()| XcmError::LocationNotInvertible)?;
+		let query_id = Self::new_query(responder, timeout, Here);
+		let response_info = QueryResponseInfo { destination, query_id, max_weight: Weight::zero() };
+		let report_error = Xcm(vec![ReportError(response_info)]);
+		message.0.insert(0, SetAppendix(report_error));
+		Ok(query_id)
+	}
+
+	fn take_response(query_id: Self::QueryId) -> QueryResponseStatus<Self::BlockNumber> {
+		QUERIES
+			.with(|q| {
+				q.borrow().get(&query_id).and_then(|v| match v {
+					ResponseSlot::Received(r) => Some(QueryResponseStatus::Ready {
+						response: r.clone(),
+						at: Self::BlockNumber::zero(),
+					}),
+					_ => Some(QueryResponseStatus::NotFound),
+				})
+			})
+			.unwrap_or(QueryResponseStatus::NotFound)
+	}
+
+	#[cfg(feature = "runtime-benchmarks")]
+	fn expect_response(_id: Self::QueryId, _response: xcm::latest::Response) {
+		// Unnecessary since it's only a test implementation
+	}
+}
+
 parameter_types! {
 	pub static ExecutorUniversalLocation: InteriorMultiLocation
 		= (ByGenesis([0; 32]), Parachain(42)).into();
@@ -429,7 +493,7 @@ impl CheckSuspension for TestSuspender {
 		_origin: &MultiLocation,
 		_instructions: &mut [Instruction<Call>],
 		_max_weight: Weight,
-		_weight_credit: &mut Weight,
+		_properties: &mut Properties,
 	) -> bool {
 		SUSPENDED.with(|s| s.get())
 	}
@@ -510,7 +574,7 @@ pub fn disallow_unlock(
 pub fn unlock_allowed(unlocker: &MultiLocation, asset: &MultiAsset, owner: &MultiLocation) -> bool {
 	ALLOWED_UNLOCKS.with(|l| {
 		l.borrow_mut()
-			.get(&(owner.clone(), unlocker.clone()))
+			.get(&(*owner, *unlocker))
 			.map_or(false, |x| x.contains_asset(asset))
 	})
 }
@@ -545,7 +609,7 @@ pub fn request_unlock_allowed(
 ) -> bool {
 	ALLOWED_REQUEST_UNLOCKS.with(|l| {
 		l.borrow_mut()
-			.get(&(owner.clone(), locker.clone()))
+			.get(&(*owner, *locker))
 			.map_or(false, |x| x.contains_asset(asset))
 	})
 }
@@ -555,11 +619,11 @@ impl Enact for TestTicket {
 	fn enact(self) -> Result<(), LockError> {
 		match &self.0 {
 			LockTraceItem::Lock { unlocker, asset, owner } =>
-				allow_unlock(unlocker.clone(), asset.clone(), owner.clone()),
+				allow_unlock(*unlocker, asset.clone(), *owner),
 			LockTraceItem::Unlock { unlocker, asset, owner } =>
-				disallow_unlock(unlocker.clone(), asset.clone(), owner.clone()),
+				disallow_unlock(*unlocker, asset.clone(), *owner),
 			LockTraceItem::Reduce { locker, asset, owner } =>
-				disallow_request_unlock(locker.clone(), asset.clone(), owner.clone()),
+				disallow_request_unlock(*locker, asset.clone(), *owner),
 			_ => {},
 		}
 		LOCK_TRACE.with(move |l| l.borrow_mut().push(self.0));
@@ -578,7 +642,7 @@ impl AssetLock for TestAssetLock {
 		asset: MultiAsset,
 		owner: MultiLocation,
 	) -> Result<Self::LockTicket, LockError> {
-		ensure!(assets(owner.clone()).contains_asset(&asset), LockError::AssetNotOwned);
+		ensure!(assets(owner).contains_asset(&asset), LockError::AssetNotOwned);
 		Ok(TestTicket(LockTraceItem::Lock { unlocker, asset, owner }))
 	}
 
@@ -596,7 +660,7 @@ impl AssetLock for TestAssetLock {
 		asset: MultiAsset,
 		owner: MultiLocation,
 	) -> Result<(), LockError> {
-		allow_request_unlock(locker.clone(), asset.clone(), owner.clone());
+		allow_request_unlock(locker, asset.clone(), owner);
 		let item = LockTraceItem::Note { locker, asset, owner };
 		LOCK_TRACE.with(move |l| l.borrow_mut().push(item));
 		Ok(())
@@ -642,6 +706,18 @@ impl AssetExchange for TestAssetExchange {
 	}
 }
 
+match_types! {
+	pub type SiblingPrefix: impl Contains<MultiLocation> = {
+		MultiLocation { parents: 1, interior: X1(Parachain(_)) }
+	};
+	pub type ChildPrefix: impl Contains<MultiLocation> = {
+		MultiLocation { parents: 0, interior: X1(Parachain(_)) }
+	};
+	pub type ParentPrefix: impl Contains<MultiLocation> = {
+		MultiLocation { parents: 1, interior: Here }
+	};
+}
+
 pub struct TestConfig;
 impl Config for TestConfig {
 	type RuntimeCall = TestCall;
@@ -651,7 +727,7 @@ impl Config for TestConfig {
 	type IsReserve = TestIsReserve;
 	type IsTeleporter = TestIsTeleporter;
 	type UniversalLocation = ExecutorUniversalLocation;
-	type Barrier = RespectSuspension<TestBarrier, TestSuspender>;
+	type Barrier = TrailingSetTopicAsId<RespectSuspension<TestBarrier, TestSuspender>>;
 	type Weigher = FixedWeightBounds<UnitWeightCost, TestCall, MaxInstructions>;
 	type Trader = FixedRateOfFungible<WeightPrice, ()>;
 	type ResponseHandler = TestResponseHandler;
@@ -667,6 +743,7 @@ impl Config for TestConfig {
 	type MessageExporter = TestMessageExporter;
 	type CallDispatcher = TestCall;
 	type SafeCallFilter = Everything;
+	type Aliasers = AliasForeignAccountId32<SiblingPrefix>;
 }
 
 pub fn fungible_multi_asset(location: MultiLocation, amount: u128) -> MultiAsset {

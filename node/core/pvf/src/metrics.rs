@@ -16,7 +16,7 @@
 
 //! Prometheus metrics related to the validation host.
 
-use crate::prepare::MemoryStats;
+use polkadot_node_core_pvf_common::prepare::MemoryStats;
 use polkadot_node_metrics::metrics::{self, prometheus};
 
 /// Validation host metrics.
@@ -85,7 +85,8 @@ impl Metrics {
 
 			#[cfg(any(target_os = "linux", feature = "jemalloc-allocator"))]
 			if let Some(tracker_stats) = memory_stats.memory_tracker_stats {
-				// We convert these stats from B to KB to match the unit of `ru_maxrss` from `getrusage`.
+				// We convert these stats from B to KB to match the unit of `ru_maxrss` from
+				// `getrusage`.
 				let max_resident_kb = (tracker_stats.resident / 1024) as f64;
 				let max_allocated_kb = (tracker_stats.allocated / 1024) as f64;
 

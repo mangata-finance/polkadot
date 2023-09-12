@@ -15,6 +15,12 @@
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
 //! `V1` database for the dispute coordinator.
+//!
+//! Note that the version here differs from the actual version of the parachains
+//! database (check `CURRENT_VERSION` in `node/service/src/parachains_db/upgrade.rs`).
+//! The code in this module implements the way dispute coordinator works with
+//! the dispute data in the database. Any breaking changes here will still
+//! require a db migration (check `node/service/src/parachains_db/upgrade.rs`).
 
 use polkadot_node_primitives::DisputeStatus;
 use polkadot_node_subsystem_util::database::{DBTransaction, Database};
@@ -46,8 +52,8 @@ const CLEANED_VOTES_WATERMARK_KEY: &[u8; 23] = b"cleaned-votes-watermark";
 /// this should not be done at once, but rather in smaller batches so nodes won't get stalled by
 /// this.
 ///
-/// 300 is with session duration of 1 hour and 30 parachains around <3_000_000 key purges in the worst
-/// case. Which is already quite a lot, at the same time we have around 21_000 sessions on
+/// 300 is with session duration of 1 hour and 30 parachains around <3_000_000 key purges in the
+/// worst case. Which is already quite a lot, at the same time we have around 21_000 sessions on
 /// Kusama. This means at 300 purged sessions per session, cleaning everything up will take
 /// around 3 days. Depending on how severe disk usage becomes, we might want to bump the batch
 /// size, at the cost of risking issues at session boundaries (performance).
@@ -206,8 +212,6 @@ fn candidate_votes_session_prefix(session: SessionIndex) -> [u8; 15 + 4] {
 pub struct ColumnConfiguration {
 	/// The column in the key-value DB where data is stored.
 	pub col_dispute_data: u32,
-	/// The column in the key-value DB where session data is stored.
-	pub col_session_data: u32,
 }
 
 /// Tracked votes on candidates, for the purposes of dispute resolution.
@@ -342,7 +346,8 @@ pub(crate) fn note_earliest_session(
 
 				if pruned_disputes.len() != 0 {
 					overlay_db.write_recent_disputes(new_recent_disputes);
-					// Note: Deleting old candidate votes is handled in `write` based on the earliest session.
+					// Note: Deleting old candidate votes is handled in `write` based on the
+					// earliest session.
 				}
 			}
 		},
@@ -378,7 +383,7 @@ mod tests {
 		let db = kvdb_memorydb::create(1);
 		let db = polkadot_node_subsystem_util::database::kvdb_impl::DbAdapter::new(db, &[0]);
 		let store = Arc::new(db);
-		let config = ColumnConfiguration { col_dispute_data: 0, col_session_data: 1 };
+		let config = ColumnConfiguration { col_dispute_data: 0 };
 		DbBackend::new(store, config, Metrics::default())
 	}
 
