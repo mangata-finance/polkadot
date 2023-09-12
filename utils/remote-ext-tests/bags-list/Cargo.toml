@@ -20,5 +20,5 @@ frame-system = { git = "https://github.com/paritytech/substrate", branch = "mast
 sp-core = { git = "https://github.com/paritytech/substrate", branch = "master" }
 
 clap = { version = "4.0.9", features = ["derive"] }
-log = "0.4.17"
+log = "0.4.20"
 tokio = { version = "1.24.2", features = ["macros"] }
