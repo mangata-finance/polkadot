@@ -356,7 +356,6 @@ sc-consensus-grandpa-rpc = { git = "https://github.com/mangata-finance/substrate
 sc-consensus-slots = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-executor = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-executor-common = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
-sc-executor-wasmi = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-executor-wasmtime = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-informant = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-keystore = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
@@ -368,7 +367,6 @@ sc-network-light = { git = "https://github.com/mangata-finance/substrate", branc
 sc-network-sync = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-network-transactions = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-offchain = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
-sc-peerset = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-proposer-metrics = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-rpc = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 sc-rpc-api = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
@@ -444,3 +442,6 @@ substrate-test-utils-derive = { git = "https://github.com/mangata-finance/substr
 substrate-wasm-builder = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 try-runtime-cli = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
 ver-api = { git = "https://github.com/mangata-finance/substrate", branch = "develop" }
+
+[patch."https://github.com/w3f/ring-proof"]
+ring = { git = "https:///github.com//w3f/ring-proof", rev="0e948f3c" }
